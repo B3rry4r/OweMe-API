@@ -1,0 +1,36 @@
+{
+  "screenId": "login",
+  "reads": [],
+  "actions": [
+    {
+      "name": "requestOtp",
+      "kind": "custom",
+      "entity": "OtpRequest",
+      "payload": [
+        {
+          "name": "phone",
+          "type": "string"
+        }
+      ],
+      "expectedResponse": {
+        "entity": "OtpRequestAccepted",
+        "cardinality": "single"
+      }
+    }
+  ],
+  "authContext": {
+    "requiresAuth": false,
+    "rolesObserved": []
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false
+  },
+  "uiStatesHandled": [
+    "continue-disabled-until-min-length: PrimaryButton stays disabled (onPressed null) until the collected digits length >= 11; no server error surfaced",
+    "phone-normalized-to-digits-only: PhoneField strips all non-digits before it reaches the screen (_digits), display formatting is a local Nigerian formatter only — no country-code/dial-code is collected or sent",
+    "flow-variant-copy: signup vs login headline/subtitle/CTA copy is static/local (no backend data); both variants fire the same phone submission",
+    "help-hint: 'Use a different number / Need help?' clears the field and shows a local snackbar (login variant) — not a backend state"
+  ]
+}

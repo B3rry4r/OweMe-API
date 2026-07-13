@@ -1,0 +1,12 @@
+{
+  "screenId": null,
+  "provenance": "declaration",
+  "declaredAs": "scheduler",
+  "integration": null,
+  "notes": "Backend-only automation behind the screen-backed Reminder resource. (1) On debt creation, generate the reminder schedule: -3 days before due, due date, +3 days, +7 days; stops on payment; business-configurable tone/policy (Gentle/Friendly/Final). (2) Delivery worker behind MessageSender (BulkSMSNigeria) sends sms/whatsapp on due occurrences, debiting the monthly send allowance (metered). manual/call/printable channels are recorded-only and free. Delivery worker MAY ship as a 501 scaffold; contracts unchanged when live.",
+  "reads": [],
+  "actions": [
+    {"name": "generateSchedule", "kind": "custom", "entity": "Reminder", "trigger": "on Debt create", "expectedResponse": {"entity": "Reminder", "cardinality": "list"}},
+    {"name": "runDeliveryTick", "kind": "custom", "entity": "Reminder", "trigger": "scheduler", "meters": "message-send allowance"}
+  ]
+}

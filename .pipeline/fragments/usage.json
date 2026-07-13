@@ -1,0 +1,115 @@
+{
+  "screenId": "usage",
+  "_scope": "ONLY class UsageScreen (+ its private helpers _usedOf/_usageSummary and _UsageCard/_openTopUp) in lib/screens/settings/subscription_screens.dart. SubscriptionScreen/ComparePlansScreen/BillingHistoryScreen/UpgradeScreen in the same file are owned by other agents and excluded here. No code changed; read-only extraction.",
+  "_summary": "Two spend meters — message-send allowance (one allowance across SMS & WhatsApp) and AI credits (weighted) — each with a consumable bundle-purchase CTA (Starter's message meter upsells to plans instead of selling bundles).",
+  "reads": [
+    {
+      "entity": "SendAllowanceLedger",
+      "_source": "Rendered by first _UsageCard (subscription_screens.dart:704-724) from _usedOf('sends', sendsCap) (line 695) where sendsCap = limitsFor(planId).sendsPerMonth. AS-BUILT MOCK: _usedOf reads shared_preferences key 'usage.sends' with hardcoded fallback (cap*0.3, or 62 when fair-use) — NOT a real send ledger (subscription_screens.dart:661-662). MAPS TO the backend messaging allowance ledger (SMS/WhatsApp automated delivery sends; manual deep-link sends are unmetered/free per conventions Metering). Scoped to the current billing period; 'resets with your plan on 1 Aug' (line 762) implies a period boundary the backend owns.",
+      "fields": [
+        {"name": "used", "type": "integer", "nullable": false, "_note": "sends consumed this period; = _usedOf('sends'). Mocked as-built; backend = automated sends debited."},
+        {"name": "remaining", "type": "integer", "nullable": false, "_note": "rendered as 'X of cap left'; as-built derived in _UsageCard = (cap-used).clamp(0,cap) (line 866). Backend may return authoritative remaining."},
+        {"name": "monthlyGrant", "type": "integer", "nullable": false, "_note": "= cap = limitsFor(plan).sendsPerMonth (billing.dart:81-108): starter 10 · market 50 · business 150 · enterprise -1(fair use). The included monthly allowance from the plan; bundle purchases add to it on top."},
+        {"name": "cap", "type": "integer", "nullable": false, "_note": "meter ceiling shown (same source as monthlyGrant as-built). -1 => fair-use, no ceiling ('used · fair use', meter fixed at 0.2, subscription_screens.dart:865-947)."},
+        {"name": "periodStart", "type": "datetime", "nullable": false, "_note": "AS-BUILT MOCK: not read; period reset shown as hardcoded '1 Aug' copy (line 762). Backend owns the billing-period start/reset boundary the used/remaining counts are scoped to."}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": ["scoped to current business + current billing period"],
+      "pagination": "none"
+    },
+    {
+      "entity": "CreditLedger",
+      "_source": "Rendered by second _UsageCard (subscription_screens.dart:745-757) from _usedOf('credits', creditsCap) (line 748) where creditsCap = limitsFor(planId).aiCreditsPerMonth. AS-BUILT MOCK: _usedOf reads shared_preferences key 'usage.credits' with hardcoded fallback (cap*0.3, or 62 when fair-use) — NOT a real credit ledger (subscription_screens.dart:661-662). MAPS TO the single shared backend AI credit ledger (conventions AI/Metering: weighted — voice parse debits 1, insight/risk debits 5; debit on success only). Sub-label 'Voice entry ×1 · Insights & risk ×5' (line 747) reflects those weights.",
+      "fields": [
+        {"name": "used", "type": "integer", "nullable": false, "_note": "AI credits consumed this period; = _usedOf('credits'). Mocked as-built; backend = weighted debits."},
+        {"name": "balance", "type": "integer", "nullable": false, "_note": "remaining credits; rendered as 'X of cap left'; as-built derived = (cap-used).clamp(0,cap) (line 866). Bundle top-ups increase it."},
+        {"name": "monthlyGrant", "type": "integer", "nullable": false, "_note": "= cap = limitsFor(plan).aiCreditsPerMonth (billing.dart:81-108): starter 10 · market 100 · business 500 · enterprise -1(fair use). -1 => fair-use rendering."}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": ["scoped to current business + current billing period; one shared ledger across all AI features"],
+      "pagination": "none"
+    },
+    {
+      "entity": "PlanLimits",
+      "_source": "limitsFor(planId) where planId = canonicalPlanId(repo.watchBusiness().plan) (subscription_screens.dart:690-694). PlanLimits const map in billing.dart:81-108. Supplies the caps (monthlyGrant/cap) for both meters and the starter branch. As-built plan config lives in the app; server is the sole entitlement authority per conventions, so caps are backend-owned.",
+      "fields": [
+        {"name": "plan", "type": "string", "nullable": false, "_note": "canonical id starter|market|business|enterprise via canonicalPlanId (billing.dart:44-48); unknown/absent fails CLOSED to starter (S-3). Drives the starter-vs-paid meter/CTA branching."},
+        {"name": "sendsPerMonth", "type": "integer", "nullable": false, "_note": "message allowance cap; -1 = fair use/unlimited."},
+        {"name": "aiCreditsPerMonth", "type": "integer", "nullable": false, "_note": "AI credit cap; -1 = fair use/unlimited."}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    },
+    {
+      "entity": "MessagingBundle",
+      "_source": "kMessagingBundles const catalog in billing.dart:235-254, shown in the 'Buy message bundle' bottom sheet (_openTopUp, subscription_screens.dart:719-723,782-838). ConsumableBundle shape. IAP consumable products; one allowance across SMS & WhatsApp. Static in-app today; candidate to be served by backend bundle/pricing config.",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false, "_note": "ConsumableBundle.productId — store IAP product id, e.g. oweme_sends_50 / oweme_sends_150 / oweme_sends_500."},
+        {"name": "quantity", "type": "integer", "nullable": false, "_note": "messages granted (50/150/500); as-built encoded in productId + label ('50 messages'), not a distinct field — backend needs it to credit the allowance ledger."},
+        {"name": "price", "type": "integer", "nullable": false, "_note": "AS-BUILT whole-naira ConsumableBundle.price (750/2000/6000). Per S-1 money is integer KOBO on the wire — schema agent normalizes."},
+        {"name": "label", "type": "string", "nullable": false, "_note": "display, e.g. '50 messages'."},
+        {"name": "detail", "type": "string", "nullable": true, "_note": "optional tag, e.g. 'Most popular' / 'Best value'."}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": [],
+      "pagination": "none"
+    },
+    {
+      "entity": "AiCreditBundle",
+      "_source": "kAiCreditBundles const catalog in billing.dart:212-231, shown in the 'Top up AI credits' bottom sheet (_openTopUp, subscription_screens.dart:752-756,782-838). ConsumableBundle shape. IAP consumable products crediting the shared AI credit ledger. Static in-app today; candidate to be served by backend bundle/pricing config.",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false, "_note": "ConsumableBundle.productId — store IAP product id, e.g. oweme_ai_credits_50 / _150 / _400."},
+        {"name": "quantity", "type": "integer", "nullable": false, "_note": "credits granted (50/150/400); as-built encoded in productId + label ('50 credits') — backend needs it to credit the AI credit ledger."},
+        {"name": "price", "type": "integer", "nullable": false, "_note": "AS-BUILT whole-naira ConsumableBundle.price (500/1200/2800). Per S-1 integer KOBO on the wire."},
+        {"name": "label", "type": "string", "nullable": false, "_note": "display, e.g. '50 credits'."},
+        {"name": "detail", "type": "string", "nullable": true, "_note": "optional tag, e.g. 'Most popular'."}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": [],
+      "pagination": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "buyConsumable",
+      "kind": "custom",
+      "entity": "ConsumableBundle",
+      "_source": "billing.buyConsumable(selected) (subscription_screens.dart:820) -> BillingService.buyConsumable (billing_service.dart:96-102) opens the OS payment sheet (StoreKit2/Play Billing, in_app_purchase). Purchase stream delivers the receipt; purchase.verificationData.serverVerificationData is posted to the backend for SERVER-SIDE receipt verification (_verifyWithBackend, billing_service.dart:107-141, STUBBED — no backend yet). On successful verification the backend CREDITS the matching ledger (messaging allowance for oweme_sends_*, AI credits for oweme_ai_credits_*). The client is display-only; the store owns the purchase and the server grants entitlement/credits.",
+      "payload": [
+        {"name": "productId", "type": "string", "_note": "the selected bundle's IAP product id (ConsumableBundle.productId); determines which ledger is credited and by how much."},
+        {"name": "platform", "type": "string", "_note": "'ios' | 'android' — selects Apple vs Google receipt verification (Apple shared secret / Play service account per conventions Env)."},
+        {"name": "receipt", "type": "string", "_note": "purchase.verificationData.serverVerificationData — the store receipt/purchase token verified server-side against Apple/Google before crediting."}
+      ],
+      "expectedResponse": {
+        "entity": "CreditLedger|SendAllowanceLedger",
+        "cardinality": "single",
+        "_note": "backend returns the updated ledger the bundle credited (AI credit ledger for oweme_ai_credits_* bundles, messaging allowance ledger for oweme_sends_* bundles). Idempotent on the store transaction id; store notifications (App Store/Play) also credit out-of-band. As-built the client UI does not consume a structured response — it only shows a snackbar ('Opening <store>…') and the meters refresh from the ledger reads."
+      }
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"],
+    "_note": "Billing/subscription (bundle purchases + usage) is owner-only per conventions (staff cannot touch billing/payout/subscription). Ledger reads and the buyConsumable action are tenant-scoped to the JWT businessId."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "_note": "Meters render from local drift stream (watchBusiness) + mocked prefs today; backend ledgers are polled/reflected, not streamed. Purchase completion is store-driven (in_app_purchase stream + async server receipt verification), not an app upload."
+  },
+  "uiStatesHandled": [
+    "loading (StreamBuilder<Business> before first emission)",
+    "plan-fail-closed-to-starter (unknown/absent plan -> starter caps)",
+    "meter-normal ('X of cap left', fraction=used/cap clamped)",
+    "meter-fair-use (cap<0, enterprise: 'used · fair use', meter fixed 0.2, no ceiling)",
+    "starter-messages-upsell (starter shows 'Free automatic reminders' meter + 'See plans' CTA to /compare instead of selling a bundle)",
+    "starter-allowance-exhausted (starter && sendsUsed>=sendsCap: gold nudge banner about 10 free auto-reminders used up)",
+    "paid-buy-bundle (non-starter: 'Buy bundle' opens messaging-bundle sheet)",
+    "ai-credits-top-up ('Top up' opens AI-credit bundle sheet)",
+    "bundle-select-sheet (radio list of bundles, defaults to 2nd/'Most popular')",
+    "store-unavailable (billing.storeAvailable false -> 'Store unavailable on this device — nothing charged', nothing charged)",
+    "off-store-stub (kBillingMode==paystack -> 'Off-store checkout is stubbed — nothing charged')"
+  ]
+}

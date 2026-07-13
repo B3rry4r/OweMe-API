@@ -1,0 +1,14 @@
+{
+  "screenId": null,
+  "provenance": "declaration",
+  "declaredAs": "ledger",
+  "integration": null,
+  "notes": "Monthly automated message-send allowance per business (starter 10, market 50, business 150, enterprise fair-use). One allowance shared across SMS & WhatsApp. IAP message bundles top it up (50/150/500). Automated sms/whatsapp reminder sends debit it; manual/call/printable sends do NOT. Manual deep-link sends and printable statements are unmetered. The Usage screen renders the send-allowance meter (screen-backed READ); ledger mechanics are backend-only. Allowance increases are an explicit owner decision — no scheduled lift.",
+  "reads": [
+    {"entity": "SendAllowanceLedger", "fields": [{"name": "remaining", "type": "number", "nullable": false}, {"name": "monthlyGrant", "type": "number", "nullable": false}, {"name": "periodStart", "type": "date", "nullable": false}], "cardinality": "single"}
+  ],
+  "actions": [
+    {"name": "debitSend", "kind": "custom", "entity": "SendAllowanceLedger", "payload": [{"name": "channel", "type": "string"}], "expectedResponse": {"entity": "SendAllowanceLedger", "cardinality": "single"}},
+    {"name": "creditBundle", "kind": "custom", "entity": "SendAllowanceLedger", "payload": [{"name": "amount", "type": "number"}], "expectedResponse": {"entity": "SendAllowanceLedger", "cardinality": "single"}}
+  ]
+}

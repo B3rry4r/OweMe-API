@@ -1,0 +1,77 @@
+{
+  "screenId": "templates",
+  "route": "/settings/templates",
+  "title": "Message Templates",
+  "reads": [
+    {
+      "entity": "BusinessProfile",
+      "source": "repo.watchBusiness()",
+      "fields": [
+        { "name": "reminderTone", "type": "string", "nullable": false, "note": "Selected tone. As-built drift column TextColumn reminderTone = text().withDefault(const Constant('Friendly')). UI reads business?.reminderTone ?? 'Friendly'. Observed enum values: Gentle | Friendly | Firm (templates_screen.dart const _tones, lines 13-26). Product-truth names the third tone 'Final' (task directive); as-built code uses 'Firm'. Reconciliation resolves the label." },
+        { "name": "businessName", "type": "string", "nullable": false, "note": "Used only as message sign-off in the live preview (_previewSuffix, lines 201-209); falls back to literal 'OweMe' when absent. Not edited on this screen." }
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "saveReminderTone",
+      "kind": "update",
+      "entity": "BusinessProfile",
+      "source": "repo.saveBusiness(BusinessProfilesCompanion(reminderTone: Value(...)))",
+      "payload": [
+        { "name": "reminderTone", "type": "string", "nullable": false, "note": "Only field written by this screen. Enum-like: Gentle | Friendly | Firm (product-truth: Gentle | Friendly | Final). Defaults to 'Friendly' when unset (templates_screen.dart _save, lines 40-47). saveBusiness upserts the single BusinessProfiles row (app_repository.dart 29-38)." }
+      ],
+      "expectedResponse": { "entity": "BusinessProfile", "cardinality": "single" }
+    }
+  ],
+  "referenceData": [
+    {
+      "name": "reminderToneSamples",
+      "kind": "template-content",
+      "description": "const _tones — three tone cards with sample messages (Gentle/Friendly/Firm), referencing mock 'Mama Grace' / '₦85,000'. Displayed as tone-selector cards. As-built these sample strings are CLIENT-SIDE constants, not persisted. Reconciliation decides whether tone sample templates persist server-side as part of BusinessProfile or stay local.",
+      "file": "lib/screens/settings/templates_screen.dart",
+      "lines": "13-26",
+      "values": [
+        { "tone": "Gentle", "sample": "Hi Mama Grace, hope you're well. Small reminder about the ₦85,000 whenever you can." },
+        { "tone": "Friendly", "sample": "Hi Mama Grace, just a reminder your ₦85,000 is due Friday. Thank you!" },
+        { "tone": "Firm", "sample": "Hi Mama Grace, your ₦85,000 is now due. Kindly settle today. Thank you." }
+      ]
+    },
+    {
+      "name": "tokenTemplate",
+      "kind": "template-content",
+      "description": "The {name}/{amount}/{due} token template rendered as a rich-text 'Template' card. Hardcoded structure: 'Hi {name}, just a reminder your {amount} is due {due}. Thank you!'. Tokens {name},{amount},{due} are the substitution placeholders. Not persisted as-built (inline Text.rich), only the selected tone is saved.",
+      "file": "lib/screens/settings/templates_screen.dart",
+      "lines": "107-131",
+      "tokens": ["{name}", "{amount}", "{due}"]
+    },
+    {
+      "name": "livePreview",
+      "kind": "presentation",
+      "description": "Client-computed 'customer receives' preview built at runtime from _previewPrefix (lines 195-199) + '₦85,000' sample amount (line 159) + _previewSuffix (lines 201-209, appends businessName sign-off + '· with pay link'). Pure presentation derived from the selected tone; no data read/write.",
+      "file": "lib/screens/settings/templates_screen.dart",
+      "lines": "134-209"
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"],
+    "note": "Business-configuration surface under Settings (business-configurable reminder tone). Per conventions.md roles model, business config / settings is owner-only; staff cannot touch business profile. No explicit in-screen role gate as-built (client trusts session)."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "note": "watchBusiness is a drift Stream (StreamBuilder) — local reactive read, not server realtime."
+  },
+  "uiStatesHandled": [
+    "loaded (BusinessProfile row present — prefills _tone from reminderTone)",
+    "empty/null-fallback (snapshot.data null → _tone defaults 'Friendly', preview sign-off falls back to 'OweMe')",
+    "tone-selected (setState updates _tone on tone-card tap, live preview + token card recompute)",
+    "saved (repo.saveBusiness then context.pop + 'Template saved' snackbar)"
+  ],
+  "notes": "Screen writes ONLY reminderTone on BusinessProfile; all template/sample/token content is client-side constant as-built. No new endpoints invented — action maps to the same BusinessProfile update seam as business-profile screen (repo.saveBusiness). Discrepancy flagged for reconciliation: as-built tone value 'Firm' vs product-truth 'Final'; and whether tone sample templates + token template persist server-side on BusinessProfile or remain local."
+}

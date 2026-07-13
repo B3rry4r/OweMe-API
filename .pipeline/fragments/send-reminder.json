@@ -1,0 +1,82 @@
+{
+  "screenId": "send-reminder",
+  "reads": [
+    {
+      "entity": "Debt",
+      "note": "repo.watchDebt(debtId) -> DebtView (debt joined with customer + payment progress). Consumed to compose the reminder message text and pay-link at runtime. DebtView.remaining = amount - paidAmount, clamped.",
+      "fields": [
+        {"name": "debt.id", "type": "string", "nullable": false},
+        {"name": "debt.amount", "type": "integer", "nullable": false},
+        {"name": "debt.note", "type": "string", "nullable": true},
+        {"name": "debt.dueDate", "type": "datetime", "nullable": true},
+        {"name": "paidAmount", "type": "integer", "nullable": false},
+        {"name": "remaining", "type": "integer", "nullable": false},
+        {"name": "customer.name", "type": "string", "nullable": false},
+        {"name": "customer.phone", "type": "string", "nullable": false}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    },
+    {
+      "entity": "BusinessProfile",
+      "note": "repo.watchBusiness() -> BusinessProfile. Supplies signoff + tone selection for message composition and the Paystack subaccount for the pay-link.",
+      "fields": [
+        {"name": "businessName", "type": "string", "nullable": false},
+        {"name": "reminderTone", "type": "string", "nullable": false},
+        {"name": "paystackSubaccount", "type": "string", "nullable": true}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "sendReminder",
+      "kind": "create",
+      "entity": "Reminder",
+      "note": "repo.sendReminder(debt, channel, scheduledFor). Records reminder history (maps to POST /reminders per conventions). Mode 1 'Send now' opens a WhatsApp/SMS deep link client-side (already shipped, out of backend scope) then records; scheduled sends are the automated/server-side path. Message text is composed at runtime from debt+business (templated by reminderTone: Gentle/Friendly/Firm), not stored client-side as a dataset. Per conventions: sms/whatsapp automated sends debit the send-allowance ledger; manual/call and printable are recorded-only and free/unmetered. Screen only emits channel sms|whatsapp (code enum ReminderChannelDb = {sms, whatsapp, call}); manual/printable exist in the convention channel set.",
+      "payload": [
+        {"name": "debtId", "type": "string"},
+        {"name": "channel", "type": "enum(sms|whatsapp|manual/call|printable)"},
+        {"name": "message", "type": "string"},
+        {"name": "payLinkUrl", "type": "string"},
+        {"name": "scheduledFor", "type": "datetime?"},
+        {"name": "status", "type": "enum(scheduled|sent|failed)"},
+        {"name": "sentAt", "type": "datetime?"}
+      ],
+      "expectedResponse": {"entity": "Reminder", "cardinality": "single"}
+    },
+    {
+      "name": "createPayLink",
+      "kind": "custom",
+      "entity": "PayLink",
+      "note": "PaystackLinkService.createPayLink(debtId, amount, subaccount) seam -> maps to POST /debts/:id/pay-link. Generates the debtor pay-link (Paystack payment request against the business subaccount) embedded in the reminder. Stubbed client-side today returning https://pay.oweme.app/d/:debtId?a=:amount; the real link is created server-side and reconciled via POST /webhooks/paystack. Invoked inside sendReminder before the reminder row is written.",
+      "payload": [
+        {"name": "debtId", "type": "string"},
+        {"name": "amount", "type": "integer"},
+        {"name": "subaccount", "type": "string?"}
+      ],
+      "expectedResponse": {"entity": "PayLink", "cardinality": "single"}
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": [],
+    "note": "No client-side role gate on this screen. Per conventions role model (owner|staff), staff may read/write debts and send reminders; sending is not owner-restricted."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false
+  },
+  "uiStatesHandled": [
+    "loading (SizedBox.shrink while watchDebt view is null)",
+    "compose/preview (live _PreviewBubble with composed message + embedded pay-link)",
+    "success (_Success screen after immediate send, _sent=true)",
+    "scheduled-confirmation (snackbar for a future scheduledFor)",
+    "error-no-phone (customer has no phone digits -> snackbar, send aborted)",
+    "deep-link-fallback (composer could not open -> message copied to clipboard)"
+  ]
+}

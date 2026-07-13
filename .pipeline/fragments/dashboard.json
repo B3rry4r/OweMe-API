@@ -1,0 +1,82 @@
+{
+  "screenId": "dashboard",
+  "reads": [
+    {
+      "entity": "DashboardData",
+      "source": "repo.watchDashboard() -> watchDashboardWithActivityCap(8)",
+      "fields": [
+        {"name": "outstandingTotal", "type": "int", "nullable": false, "note": "money whole-naira as-built (sum of open debt remaining); S-1 reconciliation -> integer kobo"},
+        {"name": "owingCustomerCount", "type": "int", "nullable": false, "note": "distinct customers with open debts"},
+        {"name": "recoveredThisMonth", "type": "int", "nullable": false, "note": "money whole-naira as-built (payments since month start on non-archived debts); S-1 -> kobo"},
+        {"name": "dueTodayTotal", "type": "int", "nullable": false, "note": "money whole-naira as-built (open debts due same calendar day); S-1 -> kobo"},
+        {"name": "overdueTotal", "type": "int", "nullable": false, "note": "money whole-naira as-built (open debts with dueDate before today); S-1 -> kobo"},
+        {"name": "overdueCount", "type": "int", "nullable": false},
+        {"name": "activity", "type": "List<ActivityItem>", "nullable": false, "note": "capped to 8 in watchDashboard; dashboard body previews first 3; feed shape described below"},
+        {"name": "hasAnyDebts", "type": "bool", "nullable": false, "note": "drives empty-state branch"},
+        {"name": "hasAnyCustomers", "type": "bool", "nullable": false, "note": "drives empty-state CTA (record debt vs add customer)"}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": ["activity sorted by at desc, then take(cap=8)"],
+      "pagination": "none"
+    },
+    {
+      "entity": "ActivityItem",
+      "source": "DashboardData.activity (nested list; also standalone via repo.watchActivity())",
+      "fields": [
+        {"name": "kind", "type": "enum ActivityKind {payment, debt, reminder}", "nullable": false},
+        {"name": "title", "type": "String", "nullable": false, "note": "derived literal: 'Payment received' | 'Debt added' | 'Reminder sent'"},
+        {"name": "subtitle", "type": "String", "nullable": false, "note": "customer name, optionally with debt note or reminder channel (SMS/WhatsApp/Call)"},
+        {"name": "amount", "type": "int", "nullable": true, "note": "money whole-naira as-built; null for reminder rows; S-1 -> kobo"},
+        {"name": "at", "type": "DateTime", "nullable": false, "note": "event timestamp; feed sorted desc by this"}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": ["sort by at desc", "dashboard caps at 8 and previews take(3)"],
+      "pagination": "none"
+    },
+    {
+      "entity": "BusinessProfile",
+      "source": "repo.watchBusiness() (limit(1), watchSingleOrNull)",
+      "fields": [
+        {"name": "ownerName", "type": "String", "nullable": false, "note": "greeting uses first word; avatar initials; empty-string default in DB"},
+        {"name": "businessName", "type": "String", "nullable": false, "note": "header title; empty-string default in DB"}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none",
+      "note": "Stream value may be null before profile exists (watchSingleOrNull). Only ownerName + businessName are consumed by this screen; other profile columns not read here."
+    },
+    {
+      "entity": "UnreadNotificationsFlag",
+      "source": "repo.watchHasUnread() -> notifications.any(!read)",
+      "fields": [
+        {"name": "hasUnread", "type": "bool", "nullable": false, "note": "bell-icon badge dot; derived from AppNotifications.read"}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    },
+    {
+      "entity": "DashboardInsight",
+      "source": "_InsightSlot widget (unpowered AI stub, renders SizedBox.shrink)",
+      "fields": [],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none",
+      "stub": true,
+      "note": "Unpowered AI placeholder — no data wired. Maps to the 501 insights surface (GET /insights/dashboard per conventions.md AI section, debit 5 on success, sourceScreens include this). Present but renders nothing until an insight source exists."
+    }
+  ],
+  "actions": [],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner", "staff"],
+    "note": "No explicit role gate in the screen; basic dashboard is core-recovery (per conventions, never plan-gated). Root authenticated screen reachable by any signed-in user of the tenant."
+  },
+  "special": {
+    "realtime": true,
+    "uploads": false,
+    "downloads": false,
+    "note": "realtime=true reflects as-built drift Streams via StreamBuilder (live re-render on local writes); backend equivalent is offline-first sync/delta-pull, not a socket."
+  },
+  "uiStatesHandled": ["loading", "empty", "error", "offline", "populated"]
+}

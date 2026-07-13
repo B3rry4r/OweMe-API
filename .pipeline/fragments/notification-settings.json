@@ -1,0 +1,42 @@
+{
+  "screenId": "notification-settings",
+  "reads": [
+    {
+      "entity": "NotificationPreferences",
+      "fields": [
+        { "name": "payments", "type": "boolean", "nullable": false, "default": true, "label": "Payments received", "description": "When money comes in" },
+        { "name": "overdue", "type": "boolean", "nullable": false, "default": true, "label": "Overdue alerts", "description": "When a debt passes its due date" },
+        { "name": "delivery", "type": "boolean", "nullable": false, "default": true, "label": "Reminder delivery", "description": "Delivered or failed" },
+        { "name": "weekly", "type": "boolean", "nullable": false, "default": false, "label": "Weekly summary", "description": "Your recovery, every Monday morning" }
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "updateNotificationPreferences",
+      "kind": "update",
+      "entity": "NotificationPreferences",
+      "payload": [
+        { "name": "payments", "type": "boolean" },
+        { "name": "overdue", "type": "boolean" },
+        { "name": "delivery", "type": "boolean" },
+        { "name": "weekly", "type": "boolean" }
+      ],
+      "expectedResponse": { "entity": "NotificationPreferences", "cardinality": "single" }
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"]
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false
+  },
+  "uiStatesHandled": [],
+  "notes": "As-built the four toggles are local-only StatefulWidget booleans (_payments/_overdue/_delivery/_weekly, defaults true/true/true/false, lines ~23-26) with NO seam read or write and no persistence. Ruled SERVE-PERSISTED (scan-map rulings.servePersisted): extracted as a real backend resource so backend push (owner-only surface) honors these preferences. Field names derived from the toggle state vars; labels/subs captured from the four ToggleRow widgets (~40-64). A single persisted NotificationPreferences row per business/owner; update toggles one flag and persists the full preference set. No loading/empty/error UI states are handled as-built (toggles always render)."
+}

@@ -1,0 +1,54 @@
+{
+  "screenId": "otp",
+  "reads": [],
+  "actions": [
+    {
+      "name": "verify-OTP",
+      "kind": "custom",
+      "entity": "Session",
+      "payload": [
+        {"name": "phone", "type": "string"},
+        {"name": "code", "type": "string"}
+      ],
+      "expectedResponse": {
+        "entity": "Session",
+        "cardinality": "single",
+        "note": "Per conventions Auth model: on successful verify issue JWT access + refresh tokens (Authorization: Bearer <access>). Access token carries sub (userId), businessId (tenant), role (owner|staff). Session/user object returned alongside tokens; refresh rotation at POST /auth/refresh. As-built the screen only calls session.logIn() (SessionStore mock over shared_preferences, no field names) — the token exchange slots in here. phone comes from GoRouterState.extra; code is the 6-digit _controller text (digitsOnly, length==6 gates the Verify button)."
+      }
+    },
+    {
+      "name": "resend-OTP",
+      "kind": "custom",
+      "entity": "Otp",
+      "payload": [
+        {"name": "phone", "type": "string"}
+      ],
+      "expectedResponse": {
+        "entity": "Otp",
+        "cardinality": "single",
+        "note": "Re-issues the code for the same phone. Same as-built path as login's request-OTP action (POST /auth/request-otp) — always 202, no account enumeration, rate-limited per phone and per IP, 10-min expiry, max 5 attempts (conventions Auth model). As-built the Resend link only resets a 24s local countdown and shows a snackbar 'Code resent to <phone>'; no backend call yet."
+      }
+    }
+  ],
+  "authContext": {
+    "requiresAuth": false,
+    "rolesObserved": [],
+    "note": "This screen COMPLETES authentication (unauthenticated when called; a successful verify-OTP is what mints the JWT). role (owner|staff) arrives in the issued token, it is not sent by this screen. signup flag branches navigation only: signup==true pushes /setup (business setup, no session.logIn), signup==false calls session.logIn() and goes to /dashboard."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false
+  },
+  "uiStatesHandled": [
+    "code-entry: six digit boxes over an invisible TextField; digitsOnly, max length 6; Verify button disabled until exactly 6 digits entered",
+    "resend-countdown: 'Resend in 0:SS' shown while a per-send timer counts down (as-built seeds 24s)",
+    "resend-available: after countdown reaches 0, tappable 'Resend code' link (fires resend-OTP; resets countdown + snackbar confirmation)",
+    "edit-phone: 'Edit' / back affordance to return to the phone-entry (login) screen",
+    "verify-success-branch: signup -> /setup, login -> /dashboard",
+    "invalid-code: NOT surfaced as-built (mock accepts any 6 digits) — backend verify-OTP must drive a wrong-code error state the UI shows",
+    "code-expired: NOT surfaced as-built — backend 10-minute expiry must drive an expired state prompting resend",
+    "attempts-remaining / locked-out: NOT surfaced as-built — backend max-5-attempts and per-phone/per-IP rate-limit (RATE_LIMITED 429) must drive attempts-remaining / temporarily-locked states"
+  ],
+  "notes": "Screen: lib/screens/onboarding/otp_screen.dart; data seam: lib/data/session.dart (SessionStore.logIn mock). The fallback phone literal '08032218890' (line ~76, used only when GoRouterState.extra is null) is a display placeholder, NOT backend data. No repository/drift reads on this screen. Money/entity supersedes (S-1..S-4) do not affect this auth screen."
+}

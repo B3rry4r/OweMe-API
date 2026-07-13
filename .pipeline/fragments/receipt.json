@@ -1,0 +1,82 @@
+{
+  "screenId": "receipt",
+  "reads": [
+    {
+      "entity": "Payment",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false},
+        {"name": "debtId", "type": "string", "nullable": false},
+        {"name": "amount", "type": "integer", "nullable": false},
+        {"name": "method", "type": "string", "nullable": false},
+        {"name": "reference", "type": "string", "nullable": false},
+        {"name": "createdAt", "type": "datetime", "nullable": false}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": ["by paymentId (route param /receipt/:paymentId)"],
+      "pagination": "none"
+    },
+    {
+      "entity": "Debt",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false},
+        {"name": "customerId", "type": "string", "nullable": false},
+        {"name": "amount", "type": "integer", "nullable": false},
+        {"name": "dueDate", "type": "datetime", "nullable": true},
+        {"name": "paidAmount", "type": "integer", "nullable": false}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": ["matched from watchAllDebts() where debt.id == payment.debtId; DebtView composite (debt + customer + paidAmount)"],
+      "pagination": "none"
+    },
+    {
+      "entity": "Customer",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false},
+        {"name": "name", "type": "string", "nullable": false}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": ["carried on the matched DebtView (debt.customer); rendered as receipt 'Customer' row"],
+      "pagination": "none"
+    },
+    {
+      "entity": "Payment",
+      "fields": [
+        {"name": "amount", "type": "integer", "nullable": false},
+        {"name": "createdAt", "type": "datetime", "nullable": false}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": ["watchPayments(payment.debtId); client sums payments with createdAt <= this payment.createdAt to compute 'Remaining balance' after this payment (debt.amount - cumulativePaid, clamped 0..amount)"],
+      "pagination": "none"
+    },
+    {
+      "entity": "BusinessProfile",
+      "fields": [
+        {"name": "businessName", "type": "string", "nullable": false}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": ["watchBusiness() (single-row profile); businessName falls back to literal 'OweMe' when absent"],
+      "pagination": "none"
+    }
+  ],
+  "actions": [],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner", "staff"]
+  },
+  "special": {
+    "realtime": true,
+    "uploads": false,
+    "downloads": true
+  },
+  "uiStatesHandled": ["loading", "empty", "loaded"],
+  "notes": [
+    "Read-only receipt/print-confirmation view; no mutations. Composes the single Payment row with its Debt+Customer (DebtView), the debt's payment history (for remaining balance), and the business name.",
+    "Payment fetch is the ONE direct drift query in the app: AppServices.instance.db.select(payments)..where(id == paymentId).getSingleOrNull() (receipt_screen.dart ~35-37) — a Future (one-shot), not a stream. It is still a data-layer read; backend contract = fetch a single Payment by id (e.g. GET /payments/:id) returning the payment plus enough of its debt/customer/business to render a receipt.",
+    "watchAllDebts / watchPayments / watchBusiness are live drift streams (StreamBuilder) -> special.realtime=true.",
+    "Receipt number: Payment.reference IS the receipt/reference field (drift comment: 'receipt number, e.g. OWM-00418'), rendered mono in the 'Reference' row. Receipt numbering is traditional software per product-truths (never AI); the field already exists on Payment as `reference` — no separate number field needed.",
+    "Money (amount / remaining) is target integer kobo per Supersede S-1 (as-built whole-naira). IDs are target UUIDv7 strings per S-2 (as-built int autoincrement).",
+    "share/print/download are client-side STUB snackbars, NOT backend endpoints: 'Share on WhatsApp' (messaging layer), 'Download' (PDF export / file layer), 'Print' ('coming soon'). Flagged as special.downloads=true (printable/export are unmetered & free per conventions), not as API actions.",
+    "'Paid via <method>' footer + method icon are pure presentation over Payment.method.",
+    "uiStatesHandled: loading = SizedBox.shrink while the payment Future is not yet done; empty = EmptyState 'Receipt not found' when the payment id resolves to null (may have been removed); loaded = full receipt card. Remaining balance shows '—' when the parent debt cannot be found."
+  ]
+}

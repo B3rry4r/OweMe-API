@@ -1,0 +1,54 @@
+{
+  "screenId": "business-profile",
+  "reads": [
+    {
+      "entity": "BusinessProfile",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false},
+        {"name": "businessName", "type": "string", "nullable": false},
+        {"name": "ownerName", "type": "string", "nullable": false},
+        {"name": "phone", "type": "string", "nullable": false},
+        {"name": "category", "type": "string", "nullable": false},
+        {"name": "currency", "type": "string", "nullable": false},
+        {"name": "reminderTone", "type": "string", "nullable": false},
+        {"name": "plan", "type": "string", "nullable": false},
+        {"name": "paystackSubaccount", "type": "string", "nullable": true},
+        {"name": "logoUrl", "type": "string", "nullable": true}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "saveBusiness",
+      "kind": "update",
+      "entity": "BusinessProfile",
+      "payload": [
+        {"name": "businessName", "type": "string"},
+        {"name": "category", "type": "string"},
+        {"name": "phone", "type": "string"}
+      ],
+      "expectedResponse": {"entity": "BusinessProfile", "cardinality": "single"}
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"]
+  },
+  "special": {
+    "realtime": false,
+    "uploads": true,
+    "downloads": false
+  },
+  "uiStatesHandled": ["loading", "prefill", "empty-profile", "saved-confirmation", "logo-empty", "logo-filled"],
+  "notes": {
+    "prefillRead": "StreamBuilder over repo.watchBusiness() -> BusinessProfile? (single row, limit(1)). Screen prefills businessName, phone, and category (only if category is in the static _categories list) once, guarded by a _loaded flag.",
+    "saveMapping": "repo.saveBusiness(BusinessProfilesCompanion) upserts the single business-profile row (insert if none, else update). This screen only writes businessName, category, and phone; ownerName, currency, reminderTone, plan, paystackSubaccount are set by other screens (setup/templates/subscription/payout) and left untouched here. Phone is normalized to digits-only before save (replaceAll non-digit).",
+    "entityShape": "BusinessProfile is a single-row (per-tenant) drift table BusinessProfiles: id (int autoincrement as-built -> UUIDv7 string per S-2), businessName, ownerName, phone, category, currency, reminderTone all TEXT with defaults; plan TEXT (canonical lowercase id per S-3, defaults recorded elsewhere); paystackSubaccount TEXT nullable (Paystack subaccount seam). No updatedAt/version columns as-built (sync agent adds per conventions).",
+    "categoriesReference": "Static const _categories list (business_profile_screen.dart lines 13-19): ['Provision store','Pharmacy','Building materials','Fashion & fabric','POS agent'] — reference values only, category is stored as free TEXT (the DB default is 'Provisions', a different string). No backend enum/endpoint implied; treat as client-side suggestion list. Note the onboarding setup screen has a longer, different _categories list — no canonical catalog exists.",
+    "logo": "_logoUploaded = true is a hardcoded mock; there is NO real upload wired. 'Change'/'Remove'/'Upload logo' controls only toggle local state and show snackbars ('Logo updated'). A logo upload for the business profile is IMPLIED (special.uploads:true) but unbuilt — no logo field exists on the BusinessProfiles table today. logoUrl added to the read shape as the anticipated field; not currently persisted or sent by saveBusiness.",
+    "authRationale": "Owner manages business profile (receipts/reminders identity). Per conventions roles owner|staff; staff cannot touch profile-level business settings — default this surface to @Roles('owner')."
+  }
+}

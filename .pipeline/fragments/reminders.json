@@ -1,0 +1,60 @@
+{
+  "screenId": "reminders",
+  "reads": [
+    {
+      "entity": "Reminder",
+      "note": "repo.watchReminders() streams List<(Reminder, DebtView)> — each Reminder row joined to its debt (and via debt to its customer) by debtId; rows whose debt is missing are dropped. The Reminder drift row itself has NO message column (reminder message text is composed at runtime in send_reminder from debt+business, not persisted here). Card renders customer.name, debt.remaining (money), channel glyph/label, and a status line.",
+      "fields": [
+        { "name": "id", "type": "int", "nullable": false },
+        { "name": "debtId", "type": "int", "nullable": false, "note": "FK -> Debts.id; join key to DebtView (debt.customer supplies customer name/avatar)" },
+        { "name": "channel", "type": "enum ReminderChannelDb {sms|whatsapp|call}", "nullable": false, "note": "as-built enum is sms|whatsapp|call; convention channel domain is sms|whatsapp|manual|printable (call == manual, recorded-history only). UI maps whatsapp->WhatsApp, call->Call, else SMS" },
+        { "name": "status", "type": "enum ReminderStatus {scheduled|sent|failed}", "nullable": false, "note": "drives the Scheduled/Sent/Failed tab filter" },
+        { "name": "scheduledFor", "type": "DateTime", "nullable": true, "note": "scheduled tab shows 'Sends <date> <time>' or 'Sends on due date' when null; failed tab uses it for 'Failed <relative>'" },
+        { "name": "sentAt", "type": "DateTime", "nullable": true, "note": "sent tab shows 'Delivered <relative>' (dereferenced non-null for sent rows)" },
+        { "name": "payLinkUrl", "type": "String", "nullable": true, "note": "Paystack seam — debtor pay-link embedded in the reminder message; regenerated on retry" },
+        { "name": "syncState", "type": "enum SyncState {pending|synced}", "nullable": false, "note": "offline-first sync flag; not rendered" }
+      ],
+      "cardinality": "list",
+      "filtersOrSort": [
+        "sort: ORDER BY id DESC (newest first)",
+        "filter: status == selected tab (scheduled | sent | failed) — client-side over the full stream; default tab = scheduled",
+        "implicit filter: only reminders whose debt still exists are shown (inner-join on debtId)"
+      ],
+      "pagination": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "retryReminder",
+      "kind": "custom",
+      "entity": "Reminder",
+      "note": "Shown only on failed rows ('Retry' pill). As-built it is a full re-send: mints a fresh Paystack pay-link, flips status->sent, sets sentAt=now, updates debt.lastReminderAt, marks rows pending, and writes a 'Reminder sent' notification. Takes the whole Reminder object; identity that matters is the reminder id (debtId derivable server-side).",
+      "payload": [
+        { "name": "id", "type": "int", "note": "reminder id to retry (source: reminder.id)" }
+      ],
+      "expectedResponse": { "entity": "Reminder", "cardinality": "single" }
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": [],
+    "note": "No role gating in the screen itself. Per conventions reminders are core recovery (owner + staff both send/retry); tenant-scoped by businessId via the debt. sms/whatsapp automated sends are metered; call(manual)/printable are free/unmetered."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "note": "Live updates are local drift StreamBuilder, not a backend realtime channel. payLinkUrl ties into the Paystack pay-link seam."
+  },
+  "uiStatesHandled": [
+    "loading (snapshot has no data yet -> empty list, tabs still render)",
+    "empty (all.isEmpty && snapshot.hasData -> _RemindersEmpty 'No reminders yet')",
+    "populated (reminder cards grouped by selected status tab)",
+    "per-tab-empty (tab with no matching rows shows just the tab chips + primary button, no explicit message)",
+    "failed-row retry affordance (Retry pill -> repo.retryReminder)"
+  ],
+  "outOfScopeNotes": [
+    "Primary 'Send reminder' button navigates to /reminders/send/:debtId (send-reminder screen) via pickOpenDebt; the send action itself belongs to that screen, not this one.",
+    "Tapping a card navigates to /debts/:id (debt-detail)."
+  ]
+}

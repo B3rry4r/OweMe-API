@@ -1,0 +1,18 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "testEnvironment": "node",
+  "testRegex": ".(e2e-spec|contract.spec).ts$",
+  "transform": {
+    "^.+\\.ts$": "ts-jest"
+  },
+  "moduleNameMapper": {
+    "^@shared$": "<rootDir>/src/shared/index.ts",
+    "^@shared/(.*)$": "<rootDir>/src/shared/$1",
+    "^@common$": "<rootDir>/src/common/index.ts",
+    "^@common/(.*)$": "<rootDir>/src/common/$1"
+  },
+  "globalSetup": "<rootDir>/test/global-setup.js",
+  "setupFiles": ["<rootDir>/test/setenv.ts"],
+  "testTimeout": 30000
+}

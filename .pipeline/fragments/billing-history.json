@@ -1,0 +1,92 @@
+{
+  "screenId": "billing-history",
+  "title": "Billing History",
+  "route": "/settings/subscription/billing",
+  "uiFile": "lib/screens/settings/subscription_screens.dart",
+  "class": "BillingHistoryScreen",
+  "dataProvenance": "inline",
+  "sourceLiteral": {
+    "file": "lib/screens/settings/subscription_screens.dart",
+    "symbol": "BillingHistoryScreen._rows",
+    "lines": "960-966",
+    "shape": "static const List<(String label, String date, int amount)> — five hardcoded rows",
+    "rows": [
+      "('Market · monthly', '1 Jul 2026', 2500)",
+      "('Messages · 150', '28 Jun 2026', 2000)",
+      "('Market · monthly', '1 Jun 2026', 2500)",
+      "('AI credits · 150', '12 May 2026', 1200)",
+      "('Market · monthly', '1 May 2026', 2500)"
+    ],
+    "note": "No data-layer read at all. Rows are rendered inline via _BillRow (subscription_screens.dart:1018-1082). This is the only screen in the file whose provenance is fully 'inline'."
+  },
+  "reads": [
+    {
+      "entity": "BillingTransaction",
+      "description": "A past billing/charge record. Real backend origin is IAP purchase history: auto-renewable subscription renewals (plan · interval, e.g. 'Market · monthly') AND consumable bundle purchases (messaging '150', AI credits '150') — see lib/data/billing/billing.dart (kPlans, kMessagingBundles, kAiCreditBundles). Store verifies receipts server-side; this is the reflected purchase ledger. As-built it is a 3-field display tuple, not a persisted model.",
+      "fields": [
+        {
+          "name": "label",
+          "type": "string",
+          "nullable": false,
+          "asBuilt": "e.g. 'Market · monthly', 'Messages · 150', 'AI credits · 150'",
+          "note": "Combines the purchased product's display name with its interval (subscription) or quantity (consumable bundle). Real backend would derive this from a product/plan/bundle reference (productId + kind) rather than a free-text label."
+        },
+        {
+          "name": "date",
+          "type": "string",
+          "nullable": false,
+          "asBuilt": "preformatted display date e.g. '1 Jul 2026'; rows ordered newest-first",
+          "note": "Represents a real transaction timestamp; as-built it is a display-formatted String, not a machine date."
+        },
+        {
+          "name": "amount",
+          "type": "integer",
+          "nullable": false,
+          "asBuilt": "whole-naira int (2500, 2000, 1200) — matches store prices in billing.dart (Market ₦2500, messages/150 ₦2000, ai/150 ₦1200)",
+          "note": "S-1: money is integer kobo on the wire/in DB in the target backend; UI divides by 100. As-built values are whole-naira. Rendered via formatNaira(amount) at subscription_screens.dart:1058."
+        }
+      ],
+      "cardinality": "list",
+      "filtersOrSort": [
+        {
+          "kind": "sort",
+          "asBuilt": "rows are in reverse-chronological (newest-first) order as authored; no user-facing sort/filter control"
+        }
+      ],
+      "pagination": "none",
+      "paginationNote": "As-built a plain ListView of 5 const rows with no pagination affordance. A real (unbounded, growing) billing history would page under the project's cursor convention; not represented as-built."
+    }
+  ],
+  "actions": [
+    {
+      "name": "resendReceipt",
+      "asBuilt": "stub",
+      "trigger": "per-row receipt icon button (_BillRow, subscription_screens.dart:1060-1077)",
+      "effect": "showAppSnackbar 'Receipt sent to your email' — no network call, no download to device",
+      "note": "Per-row action against a single BillingTransaction. Special: receipts are emailed rather than downloaded in-app. No endpoint invented."
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"],
+    "note": "Billing/subscription is owner-only per conventions.md (staff cannot touch billing/payout/subscription)."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": true,
+    "downloadsNote": "Receipt buttons are stub snackbars ('Receipt sent to your email'); footer copy states receipts are 'also sent by email' and purchases are made via the store (IAP mode) or Paystack. Treated as a download/receipt-delivery surface, though as-built it emails rather than streams a file."
+  },
+  "uiStatesHandled": [
+    {
+      "state": "populated",
+      "asBuilt": "always renders the 5 const rows plus a footer note (subscription_screens.dart:1000-1007) that varies on kBillingMode (iap vs paystack)"
+    }
+  ],
+  "uiStatesNotHandled": ["loading", "empty", "error"],
+  "uiStatesNote": "Because data is inline const, no loading/empty/error states exist as-built; a real backed list would need them.",
+  "dependencies": {
+    "readOnlyRefs": ["lib/data/billing/billing.dart"],
+    "note": "billing.dart supplies plan/bundle catalogs (kPlans, kMessagingBundles, kAiCreditBundles) that the _rows labels/prices mirror, plus kBillingMode used only for the footer string. No billing.dart symbol is actually read by this screen at runtime."
+  }
+}

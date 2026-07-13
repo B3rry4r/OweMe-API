@@ -1,0 +1,65 @@
+{
+  "screenId": "settings",
+  "reads": [
+    {
+      "entity": "Business",
+      "fields": [
+        { "name": "businessName", "type": "string", "nullable": true },
+        { "name": "reminderTone", "type": "string", "nullable": true },
+        { "name": "plan", "type": "string", "nullable": false }
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none",
+      "notes": "repo.watchBusiness() -> BusinessProfile? (settings_screen.dart:23). Single-row business profile scoped to the authed business. Used for: header avatar/name (business.businessName ?? 'OweMe'/''), the reminder-tone row value (business.reminderTone ?? 'Friendly'), and the current-plan pill/subscription-row value derived via planDisplayName(canonicalPlanId(business.plan)) (settings_screen.dart:26,68,87,100). 'plan' is the canonical entitlement key per S-3 (starter|market|business|enterprise, unknown/absent -> starter); planDisplayName/canonicalPlanId are pure client-side display transforms over this same field (billing.dart:44-55), NOT a separate backend read."
+    }
+  ],
+  "actions": [
+    {
+      "name": "logout",
+      "kind": "custom",
+      "entity": "Auth",
+      "payload": [],
+      "expectedResponse": { "entity": "", "cardinality": "single" },
+      "notes": "session.logOut() (settings_screen.dart:202), then navigates to /welcome. As-built it flips a local shared_preferences flag (session.dart:21) with NO DB writes; the real seam clears the issued JWT access/refresh tokens. Refresh-token revocation is a backend concern (conventions: refresh rotation + reuse detection at POST /auth/refresh)."
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner", "staff"],
+    "notes": "Navigation hub visible to any authenticated user of the business; both owner and staff land here. The hub itself reads only the shared Business row and offers logout. Owner-only capabilities (billing/subscription, payout, staff management) live behind the rows it links to, not on this screen; role gating applies on those target screens/endpoints, not here."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "notes": "sync.lastSyncedAt (ValueNotifier<DateTime?>, settings_screen.dart:142-152; sync_service.dart:23) renders the Backup & sync row's 'Today HH:MMam/pm' timestamp. This is CLIENT-LOCAL sync state (set by the stub SyncService.syncNow after flipping pending rows to synced) — not a backend read/field on this screen. The real sync surface (GET /sync delta pull, lastSyncedAt) is owned by the 'backup' screen per conventions; settings only displays the last-synced clock."
+  },
+  "uiStatesHandled": ["loading", "empty", "loaded"],
+  "inlineMocksNoted": [
+    {
+      "item": "staffCount",
+      "file": "lib/screens/settings/settings_screen.dart",
+      "lines": "123-129",
+      "detail": "Staff & roles row value hardcoded to '1 staff'. NOT backed by any data seam (there is no drift staff table). Should come from the Staff resource (count of staff members for the business); per S-4 the model is coarse owner|staff. Do not invent an endpoint here — the Staff resource is extracted by the staff screen."
+    },
+    {
+      "item": "paymentMethods",
+      "file": "lib/screens/settings/settings_screen.dart",
+      "lines": "255-282",
+      "detail": "_openPaymentMethods bottom sheet lists two hardcoded mock rows: 'Verve •••• 8021' (subscription billing via app store) and 'Paystack pay-links' (debtor settlement to bank), plus a 'Managing payout accounts arrives with the payments backend' notice. Pure UI mock. The real payout/bank data belongs to the payout-account resource (bankCode/accountNumber/accountName -> Paystack subaccount); subscription card is store-managed. No backend read on this screen."
+    },
+    {
+      "item": "appVersion",
+      "file": "lib/screens/settings/settings_screen.dart",
+      "lines": "235",
+      "detail": "Footer literal 'OweMe 1.4.2'. Static app build metadata, not a backend field."
+    },
+    {
+      "item": "localPrefsDisplayValues",
+      "file": "lib/screens/settings/settings_screen.dart",
+      "lines": "112-114,153-173",
+      "detail": "Non-backend display values shown as row subtitles: appPrefs.getString('payout.bankName') ?? 'Not set' (payout row), appTheme.mode (Appearance), appPrefs.getString('app.language') ?? 'English' (Language). These are device-local shared_preferences/theme controllers (welcome/appearance/language rulings: stay local); recorded for completeness, not backend reads."
+    }
+  ]
+}

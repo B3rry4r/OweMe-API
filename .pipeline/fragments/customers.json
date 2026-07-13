@@ -1,0 +1,58 @@
+{
+  "screenId": "customers",
+  "reads": [
+    {
+      "entity": "Customer",
+      "description": "Customers list ('Who owes me?'). UI binds to repo.watchCustomers() -> List<CustomerView>. CustomerView is a per-customer aggregate the frontend computes CLIENT-SIDE by joining the Customer row with its debts/payments/reminders (AppRepository.watchCustomers combineLatest4 over customers+debts+payments+reminders). The base persisted entity is Customer (drift table Customers); the aggregate fields (owed, debtCount, worstStatus, lastActivityAt, lastPaymentAt, lastReminderAt, earliestOverdueDue) are derived, not stored. A server list endpoint should return the Customer row plus these computed aggregates so the client can drop the local join. Money is integer kobo on the wire (Supersede S-1; drift stores whole-naira 'owed' today). Ids become client-minted UUIDv7 strings (Supersede S-2; drift uses int autoincrement today).",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false, "note": "drift: int autoIncrement as-built; target UUIDv7 string per S-2. Row tap routes /customers/:id."},
+        {"name": "name", "type": "string", "nullable": false, "note": "Customer.name; displayed + client-side searchable (substring, case-insensitive)."},
+        {"name": "phone", "type": "string", "nullable": false, "note": "Customer.phone; drift default '' (non-null, may be empty). Client-side searchable by digits; rendered via formatPhone()."},
+        {"name": "address", "type": "string", "nullable": true, "note": "Customer.address; not shown on this list but part of the entity."},
+        {"name": "note", "type": "string", "nullable": true, "note": "Customer.note; not shown on this list but part of the entity."},
+        {"name": "createdAt", "type": "datetime", "nullable": false, "note": "Customer.createdAt; used as lastActivityAt fallback ('Added ...')."},
+        {"name": "updatedAt", "type": "datetime", "nullable": false, "note": "Customer.updatedAt; sync updatedAt seam per conventions."},
+        {"name": "owed", "type": "integer", "nullable": false, "note": "CustomerView.owed — outstanding/balance. Sum of remaining across this customer's non-archived debts. Integer kobo on wire (S-1). Drives amount, 'owing' filter, 'most owed' sort, and the summary strip total."},
+        {"name": "debtCount", "type": "integer", "nullable": false, "note": "CustomerView.debtCount — count of this customer's debts with remaining > 0 (open debts)."},
+        {"name": "worstStatus", "type": "enum(DebtStatus: overdue|partial|outstanding|scheduled|reminder|paid)", "nullable": false, "note": "CustomerView.worstStatus — highest-severity status among open debts; 'paid' when none open. Drives status chip, overdue red edge, 'overdue'/'paid up' filters."},
+        {"name": "lastActivityAt", "type": "datetime", "nullable": true, "note": "CustomerView.lastActivityAt — latest of last debt/payment/reminder, falling back to createdAt. Drives 'recently active' sort and the row's relative-time line."},
+        {"name": "lastPaymentAt", "type": "datetime", "nullable": true, "note": "CustomerView.lastPaymentAt — latest payment createdAt across their debts; disambiguates the row verb ('Paid ...')."},
+        {"name": "lastReminderAt", "type": "datetime", "nullable": true, "note": "CustomerView.lastReminderAt — latest sent reminder sentAt across their debts; disambiguates the row verb ('Reminded ...')."},
+        {"name": "earliestOverdueDue", "type": "datetime", "nullable": true, "note": "CustomerView.earliestOverdueDue — oldest missed due date among open debts; drives 'Overdue Nd' label."}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": [
+        "filter:All (_Filter.all — no filter)",
+        "filter:Owing (_Filter.owing — owed > 0)",
+        "filter:Overdue (_Filter.overdue — worstStatus == overdue)",
+        "filter:Paid up (_Filter.paidUp — owed == 0 && worstStatus == paid)",
+        "sort:Most owed (_Sort.mostOwed — owed desc; also the default server-side sort in watchCustomers)",
+        "sort:Recently active (_Sort.recentlyActive — lastActivityAt desc)",
+        "sort:Name (A-Z) (_Sort.name — name asc)",
+        "search:name substring (case-insensitive) OR phone digit-substring"
+      ],
+      "pagination": "none",
+      "paginationNote": "No pagination today — watchCustomers() streams ALL customers and filter/sort/search are applied entirely client-side over the full list. FLAG: an active trader's customer roster is unbounded, so a server list endpoint SHOULD support cursor pagination (conventions: ?cursor&limit, Paginated<T>). If pagination is added, the four filters, three sorts, and name/phone search must move server-side too (they cannot be applied client-side over a partial page)."
+    }
+  ],
+  "actions": [],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner", "staff"],
+    "note": "Read-only list; both roles may view customers (conventions: staff can read/write debts and customers). Tenant-scoped by businessId. This screen fires no mutations itself — swipe/tap actions only navigate (/customers/add, /customers/:id, /reminders/send/:debtId, /debts/:id/pay) and are covered by other screens' fragments."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "note": "Offline-first live stream (drift StreamBuilder) — locally reactive, not a server realtime channel."
+  },
+  "uiStatesHandled": [
+    "loading (no snapshot data yet — renders as empty list until stream emits)",
+    "empty (all.isEmpty && hasData -> _CustomersEmpty 'No customers yet' + Add customer CTA)",
+    "populated (list of CustomerListRow with avatar, name, formatted phone, owed amount, status chip, last-activity line)",
+    "searching (match count header '{n} match(es)')",
+    "no-results (search yields none -> _NoResults with 'Add \"query\"' CTA)",
+    "overdue-emphasis (worstStatus == overdue -> red left edge, red amount, 'Overdue Nd' label)"
+  ]
+}

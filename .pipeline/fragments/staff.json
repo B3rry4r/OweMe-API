@@ -1,0 +1,87 @@
+{
+  "screenId": "staff",
+  "extractedFrom": {
+    "screenClass": "StaffScreen",
+    "file": "lib/screens/settings/staff_screens.dart",
+    "notes": "Source of truth is the in-memory mock, not a drift table. Entity StaffMember declared lines 14-26; roster ValueNotifier kStaff seeded with 2 members (Excel Okafor/Owner/isOwner, Chiamaka Udo/Cashier) lines 30-42; seatCapForPlan(plan) lines 47-50 (delegates to billing limitsFor(plan).staffSeats, -1 unlimited -> 99); const _roles (4 display roles: Manager/Cashier/Recovery Officer/Sales Representative) lines 52-57. Invite mutation appends to kStaff lines 229-236. StaffPermissionsScreen (deactivate/remove + granular perms) is OUT OF SCOPE (owned by staff-permissions agent).",
+    "supersedesApplied": ["S-4"],
+    "supersedeNote": "S-4 collapses the granular per-permission matrix and free-text role labels (Owner/Cashier/Manager/...) to a coarse two-role model role = owner | staff. Per-permission flags (kStaffPerms) are NOT extracted. As-built isOwner boolean maps to role=owner; every non-owner member maps to role=staff."
+  },
+  "entity": {
+    "name": "Staff",
+    "asBuiltClass": "StaffMember",
+    "asBuiltFields": "name, phone, role (free-text display label), isOwner (bool)",
+    "targetFields": [
+      {"name": "id", "type": "string", "nullable": false, "note": "client-minted UUIDv7 per conventions/S-2; no id on the as-built mock (roster keyed by phone/list index)"},
+      {"name": "name", "type": "string", "nullable": false},
+      {"name": "phone", "type": "string", "nullable": false, "note": "primary natural key in the mock; digits only (invite strips non-digits, requires >=10)"},
+      {"name": "role", "type": "string", "nullable": false, "note": "coarse enum owner|staff per S-4 (collapses as-built free-text roles + isOwner)"},
+      {"name": "active", "type": "boolean", "nullable": false, "note": "seeded members are active; invite creates active; deactivate (staff-permissions screen) removes/flips to inactive. As-built has no explicit flag — modelled as active status."}
+    ]
+  },
+  "reads": [
+    {
+      "entity": "Staff",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false},
+        {"name": "name", "type": "string", "nullable": false},
+        {"name": "phone", "type": "string", "nullable": false},
+        {"name": "role", "type": "string", "nullable": false},
+        {"name": "active", "type": "boolean", "nullable": false}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": ["owner rendered first with 'You' badge; staff count = members where role != owner"],
+      "pagination": "none",
+      "note": "Rendered from kStaff ValueNotifier (all members for the business). Empty (solo) state when non-owner count == 0."
+    },
+    {
+      "entity": "BusinessPlanSeatCap",
+      "fields": [
+        {"name": "plan", "type": "string", "nullable": false, "note": "canonical plan id from repo.watchBusiness()/getBusiness().plan via canonicalPlanId"},
+        {"name": "seatCap", "type": "integer", "nullable": false, "note": "derived seatCapForPlan(plan) = limitsFor(plan).staffSeats: market 1, business 5, enterprise unlimited (-1 -> 99); starter 0"},
+        {"name": "seatsUsed", "type": "integer", "nullable": false, "note": "count of non-owner staff"}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none",
+      "note": "Derived seat-cap display ('$staff of $cap staff seats used on $plan') and the invite gate (seatsLeft = cap - used). Not a stored entity — plan comes from the business, cap from billing limitsFor(plan).staffSeats."
+    }
+  ],
+  "actions": [
+    {
+      "name": "inviteStaff",
+      "kind": "create",
+      "entity": "Staff",
+      "payload": [
+        {"name": "phone", "type": "string", "note": "digits only, >=10 required; the only field the invite sheet collects"},
+        {"name": "role", "type": "string", "note": "coarse owner|staff per S-4; as-built defaults to _roles.first and lets owner pick a display role — collapse to staff"},
+        {"name": "name", "type": "string", "note": "as-built auto-generated placeholder ('Invited · <phone>') until the invitee sets it; conceptually part of the Staff record"}
+      ],
+      "expectedResponse": {"entity": "Staff", "cardinality": "single"},
+      "note": "As-built appends a StaffMember to kStaff in memory and shows a snackbar. Gated by seat cap: when seatsLeft <= 0 the invite CTA is replaced by a 'See plans' upgrade path (no invite fired). Send button disabled until phone has >=10 digits."
+    }
+  ],
+  "actionsOutOfScope": [
+    {"name": "deactivateStaff", "reason": "Deactivate/remove staff is fired from StaffPermissionsScreen (kStaff.value filtered by phone, lines 513-516), which is owned by the staff-permissions agent. Not extracted here.", "impliedKind": "delete-or-status-update", "entity": "Staff"}
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"],
+    "note": "Per conventions only owner manages staff (staff role cannot manage staff). Screen is owner-facing; the current user is the owner (isOwner member = 'You')."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "planGated": true,
+    "planGateNote": "Staff count gated by plan seat limits (seatCapForPlan): starter 0, market 1, business 5, enterprise unlimited. Exceeding the cap blocks invite and routes to upgrade — backend should enforce (PLAN_REQUIRED 403 per conventions)."
+  },
+  "uiStatesHandled": [
+    "empty-solo (non-owner count == 0 -> 'It's just you for now' empty state)",
+    "populated-list (owner + staff rows with role pill)",
+    "seat-cap-usage-caption ('$staff of $cap staff seats used on $plan')",
+    "seat-limit-reached (seatsLeft <= 0 -> upgrade nudge banner + 'See plans' CTA replacing invite)",
+    "invite-form-validation (Send invite disabled until phone digits >= 10)",
+    "invite-success (snackbar 'Invite sent to <phone> as <role>')"
+  ]
+}

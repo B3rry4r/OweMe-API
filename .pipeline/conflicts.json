@@ -1,0 +1,6 @@
+{
+  "conflicts": [],
+  "resolved": [
+    {"id": "C-1", "resolution": "ruling: reminderTone third value = 'final' (product-truth T-27 > as-built). Recorded as supersede S-5 + UI-align task UA-3.", "resolvedAt": "2026-07-11"}
+  ]
+}

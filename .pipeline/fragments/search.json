@@ -1,0 +1,68 @@
+{
+  "screenId": "search",
+  "notes": "Global search over customers + debts. Per product truth (conventions.md AI guardrail) search is TRADITIONAL software, never AI. As-built the screen does NOT hit a dedicated search endpoint: it subscribes to repo.watchCustomers() (List<CustomerView>) + repo.watchDebts() (List<DebtView>) and filters entirely client-side in the StreamBuilder (search_screen.dart lines 82-118). Query is lowercased; a digits-only variant (q.replaceAll(RegExp('\\\\D'),'')) is matched against phone and amount/remaining. Customers match on name+phone (a customer with no debts is still findable); debts match on customer.name, customer.phone, debt.note, debt.amount, remaining. Results are two rendered subsets, not the full entities. No dedicated backend search endpoint is invented here; the backend may keep serving these two list reads and let the client filter, OR add a search query param later — reconciliation decision, not extracted here.",
+  "reads": [
+    {
+      "entity": "Customer",
+      "sourceCall": "repo.watchCustomers() -> List<CustomerView>",
+      "renderedAs": "Customers result group (_MiniResult); tap -> /customers/:id",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false, "note": "customer.id; nav target only. UUIDv7 target per S-2 (int autoincrement as-built)."},
+        {"name": "name", "type": "string", "nullable": false, "note": "customer.name; matched (contains, case-insensitive) + rendered as title + avatar seed."},
+        {"name": "phone", "type": "string", "nullable": false, "note": "customer.phone (defaults ''); matched on digits-only variant; rendered via formatPhone()."},
+        {"name": "owed", "type": "integer", "nullable": false, "note": "CustomerView.owed aggregate outstanding; rendered as amount (formatNaira). Kobo on the wire per S-1."}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": [
+        "client-side filter: name contains(query) OR (digits present AND phone contains(digits))",
+        "no sort applied on this screen (stream order preserved)"
+      ],
+      "pagination": "none"
+    },
+    {
+      "entity": "Debt",
+      "sourceCall": "repo.watchDebts() -> List<DebtView> (DebtView = debt + joined customer + paidAmount)",
+      "renderedAs": "Debts result group (_MiniResult); tap -> /debts/:id",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false, "note": "debt.id; nav target only. UUIDv7 target per S-2."},
+        {"name": "amount", "type": "integer", "nullable": false, "note": "debt.amount; matched via debt.amount.toString().contains(digits). Kobo per S-1."},
+        {"name": "remaining", "type": "integer", "nullable": false, "note": "DebtView.remaining = (amount - paidAmount).clamp(0,amount); matched via remaining.toString().contains(digits); rendered as the row amount. Derived, not a stored column. Kobo per S-1."},
+        {"name": "note", "type": "string", "nullable": true, "note": "debt.note; matched (contains, case-insensitive) + rendered in subtitle ('note · dueLabel')."},
+        {"name": "dueDate", "type": "datetime", "nullable": true, "note": "debt.dueDate; rendered as dueLabel() in subtitle (not matched)."},
+        {"name": "customer.name", "type": "string", "nullable": false, "note": "joined Customer.name; matched (contains) + rendered as title."},
+        {"name": "customer.phone", "type": "string", "nullable": false, "note": "joined Customer.phone; matched on digits-only variant."}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": [
+        "client-side filter: customer.name contains(query) OR (digits present AND (customer.phone contains(digits) OR amount.toString contains(digits) OR remaining.toString contains(digits))) OR note contains(query)"
+      ],
+      "pagination": "none"
+    }
+  ],
+  "actions": [],
+  "recentSearchHistory": {
+    "file": "lib/screens/misc/search_screen.dart",
+    "lines": "24-42, 200-247",
+    "field": "static final List<String> _recents",
+    "seed": ["Mama Grace", "₦85,000", "0803 456 7890", "Emeka Stores"],
+    "behavior": "In-memory session history (newest first), mutated at runtime: _remember() inserts on a successful search (dedup, cap 6, min length 2, lines 31-42); user can delete a row (_recents.removeAt, line 236). Shown as the idle/empty-query state (_buildRecents, lines 189-249). No persistence, no repository, no drift table.",
+    "reconciliation": "Likely stays a LOCAL DEVICE concern (like a keyboard MRU) — not a backend resource. Flagged for reconciliation; no endpoint extracted."
+  },
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner", "staff"],
+    "note": "Reads customers + debts, both readable by owner and staff per conventions.md roles model. No owner-only capability on this screen."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "note": "Uses drift streams locally (offline-first), but search itself is deterministic traditional-software client-side filtering — no realtime backend requirement introduced by this screen."
+  },
+  "uiStatesHandled": [
+    "idle/empty-query: shows Recent search history (_buildRecents)",
+    "no-results: _NoMatches empty state ('No matches for “<query>”', when both customerHits and hits are empty)",
+    "results: grouped Customers and/or Debts cards (either group renders only if non-empty)",
+    "loading: implicit — StreamBuilder falls back to [] (snapshot.data ?? []) before first emission, no dedicated spinner"
+  ]
+}

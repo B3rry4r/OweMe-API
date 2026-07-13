@@ -1,0 +1,87 @@
+{
+  "phase": "complete",
+  "wave": null,
+  "completed": {
+    "extract": 31,
+    "build": [
+      "Business",
+      "Plan",
+      "Staff",
+      "Usage",
+      "Auth",
+      "Customer",
+      "Notification",
+      "NotificationPreferences",
+      "PayoutAccount",
+      "Subscription",
+      "Voice",
+      "Insights",
+      "Debt",
+      "Bvum",
+      "Payment",
+      "Reminder",
+      "Dashboard",
+      "Activity",
+      "Sync",
+      "Webhooks"
+    ]
+  },
+  "failed": [],
+  "registryFrozen": true,
+  "frameworkFrozen": true,
+  "conflictsOpen": [],
+  "waves": [
+    [
+      "Business",
+      "Plan"
+    ],
+    [
+      "Staff",
+      "Usage"
+    ],
+    [
+      "Auth",
+      "Customer",
+      "Notification",
+      "NotificationPreferences",
+      "PayoutAccount",
+      "Subscription",
+      "Voice",
+      "Insights"
+    ],
+    [
+      "Debt"
+    ],
+    [
+      "Bvum",
+      "Payment",
+      "Reminder"
+    ],
+    [
+      "Dashboard",
+      "Activity",
+      "Sync",
+      "Webhooks"
+    ]
+  ],
+  "updatedAt": "2026-07-11",
+  "registryEndpointsBuilt": true,
+  "smokePass": true,
+  "totalContractTests": 175,
+  "smokeTests": 59,
+  "endpoints": 56,
+  "phase6": {
+    "wave": "B-schema-prep",
+    "frontendRepo": "/workspace/projects/OweMe-Mobile",
+    "approach": "syncId-uuid mapping (keep local int PKs) + kobo<->naira boundary conversion (keep local whole-naira). UA-1 superseded.",
+    "status": "complete",
+    "waves_done": [
+      "A-api-client",
+      "B-schema",
+      "C0-auth",
+      "C-seams(7)",
+      "D-subscription+UA3"
+    ],
+    "frontend_gate": "flutter analyze clean; flutter test 19/19 pass"
+  }
+}

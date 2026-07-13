@@ -1,0 +1,53 @@
+{
+  "screenId": "backup",
+  "provenance": "screen",
+  "sourceFiles": [
+    "lib/screens/settings/app_settings_screens.dart (class BackupScreen)",
+    "lib/data/sync/sync_service.dart (read-only seam)"
+  ],
+  "reads": [
+    {
+      "entity": "SyncStatus",
+      "note": "Client-side sync status the UI renders. NOT a persisted server entity today — it is the projection of the SyncService seam (sync.online / sync.syncing / sync.lastSyncedAt / sync.watchPendingCount()). Maps to the offline-first delta-sync protocol: lastSyncedAt is the cursor watermark, pendingCount is the count of local rows with syncState==pending awaiting push. online/syncing are pure client/connectivity state and are display-only (no backend field).",
+      "fields": [
+        {"name": "online", "type": "boolean", "nullable": false, "note": "Client connectivity flag (ValueNotifier<bool>, real impl connectivity_plus). Display-only; drives OfflineBanner + offline copy. No server field."},
+        {"name": "syncing", "type": "boolean", "nullable": false, "note": "True while a sync pass is in flight (ValueNotifier<bool>). Display-only; drives 'Backing up…' + Meter + button loading."},
+        {"name": "lastSyncedAt", "type": "string", "nullable": true, "note": "DateTime? of last successful sync. Null until first sync (UI falls back to display literal 'yesterday, 6:10pm'). Corresponds to the delta-sync cursor watermark (GET /sync?since=<cursor>)."},
+        {"name": "pendingCount", "type": "integer", "nullable": false, "note": "Count of unsynced local rows (Stream<int> from watchPendingCount(): sum of syncState==pending across Customers+Debts+Payments+Reminders). The push side of the delta protocol."}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "syncNow",
+      "kind": "custom",
+      "entity": "SyncDelta",
+      "trigger": "'Back up now' PrimaryButton -> sync.syncNow(); also fired automatically by sync.setOnline(true) on reconnect. As-built stub flips pending rows to synced after a delay; real impl = delta pull GET /sync?since=<cursor> (changes + tombstones + new cursor) plus push of local pending rows.",
+      "payload": [
+        {"name": "since", "type": "string", "nullable": true, "note": "Sync cursor / last-synced watermark (lastSyncedAt-derived). Null/absent on first full sync."}
+      ],
+      "expectedResponse": {
+        "entity": "SyncDelta",
+        "cardinality": "single",
+        "note": "Per declared/sync.json: { changes, tombstones, cursor }. Client re-applies changes, deletes tombstones, advances cursor -> updates lastSyncedAt, clears pendingCount."
+      }
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": [],
+    "note": "Screen does not gate on role; sync is per-business and available to any authenticated user (owner|staff). All queries scoped to JWT businessId."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "sync": true,
+    "note": "This is THE sync surface — the client-facing view of the offline-first delta-sync protocol (GET /sync?since=<cursor> pull + pending push). syncNow does both directions."
+  },
+  "uiStatesHandled": ["offline", "syncing", "synced", "pending"],
+  "uiStatesNote": "Explicitly rendered: offline ('You're offline' + OfflineBanner + disabled button), syncing ('Backing up…' + progress Meter + loading button), synced/resting ('Last backed up' + 'Everything is backed up'), and pending ('N change(s) waiting to back up'). NO error/failure state is handled in the screen — syncNow has no error UI (task-hinted 'error' state is absent as-built)."
+}

@@ -1,0 +1,71 @@
+{
+  "screenId": "record-payment",
+  "reads": [
+    {
+      "entity": "Debt",
+      "fields": [
+        {"name": "id", "type": "int (as-built autoincrement; → UUIDv7 string per S-2)", "nullable": false},
+        {"name": "amount", "type": "int whole-naira as-built (→ integer kobo per S-1); original debt amount", "nullable": false},
+        {"name": "paidAmount", "type": "int whole-naira as-built (→ integer kobo); sum of payments, derived", "nullable": false},
+        {"name": "remaining", "type": "int whole-naira as-built (→ integer kobo); computed = (amount - paidAmount).clamp(0, amount)", "nullable": false},
+        {"name": "customer.name", "type": "string (display only: 'X owes ₦Y', avatar, success copy)", "nullable": false}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none",
+      "notes": "repo.watchDebt(debtId) consumed via StreamBuilder<DebtView?>. DebtView = Debt joined with Customer + paidAmount (payment progress); remaining is a computed getter, not a stored column. Read is a local drift stream (offline-first), not a backend realtime channel. Screen pre-fills the amount field with the full remaining balance and shows 'Remaining after this' live as the trader types."
+    }
+  ],
+  "actions": [
+    {
+      "name": "recordPayment",
+      "kind": "create",
+      "entity": "Payment",
+      "payload": [
+        {"name": "debtId", "type": "int as-built (→ UUIDv7 string FK to Debt per S-2); parent debt the payment settles"},
+        {"name": "amount", "type": "int whole-naira as-built (→ integer kobo per S-1); amount received, digits-only, must be >0 and <= debt.remaining (partial payments allowed)"},
+        {"name": "method", "type": "string; one of the inline _methods catalog values 'Cash' | 'Bank transfer' | 'POS' | 'Paystack link', default 'Cash'"},
+        {"name": "date", "type": "DateTime; NOT sent by this screen as-built — server-authoritative createdAt = now() (drift Payments.createdAt set in repo.recordPayment). Include as server-set timestamp, not a client field."},
+        {"name": "note", "type": "string? OPTIONAL — NOT present on this screen or the drift Payments table as-built; listed for Payment-shape completeness only (do not wire a note input here)."}
+      ],
+      "expectedResponse": {
+        "entity": "Payment",
+        "cardinality": "single",
+        "notes": "As-built repo.recordPayment returns (paymentId, reference) where reference is a receipt number minted server-side ('OWM-00001' zero-padded from the id, 'OWM-TMP' placeholder pre-mint). Screen uses paymentId to navigate to /receipt/:paymentId when the 'Generate receipt' toggle is on. Partial payment auto-updates the debt balance: after recording, DebtView.remaining recomputes from the new paidAmount (product invariant — balance/remaining is traditional software, never AI, never a client-sent field). Debt reaching remaining==0 shows 'settled' vs 'shrinking' copy but there is no separate mark-paid call from this screen."
+      }
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner", "staff"],
+    "notes": "Recording a payment is a debts read/write action. Per conventions Roles & permissions and supersede S-4 (coarse owner|staff), staff CAN record payments (read/write debts and customers); only delete/staff-mgmt/billing/payout are owner-only. Route defaults to the least-restrictive role that covers it → staff. Multi-tenant: Payment inherits businessId from its Debt, scoped to the JWT businessId."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "notes": "StreamBuilder reactivity is local drift, not a backend push/websocket. Receipt 'Share' is a stub navigation to /receipt, not a file download. Create is offline-first: writes locally + instantly, marks syncState=pending; per conventions create is idempotent on the client-minted id (S-2) and carries If-Match version on later edits."
+  },
+  "uiStatesHandled": [
+    "loading: watchDebt emits null → SizedBox.shrink (no debt yet)",
+    "empty-amount / disabled CTA: 'Complete payment' disabled while amount <= 0",
+    "validation: amount <= 0 → snackbar 'Enter an amount first'",
+    "validation: amount > remaining → snackbar \"That's more than the ₦X remaining\" (overpayment blocked)",
+    "partial-payment: live 'Remaining after this: ₦X' shown when 0 < amount < remaining (balance auto-updates)",
+    "Full/Half/Custom amount chips (Half = remaining ~/ 2)",
+    "payment-method picker bottom sheet over inline _methods catalog",
+    "success: post-write success screen with amount recorded, settled-vs-shrinking copy, shrunken DebtPanel, and Share-receipt vs Done based on the 'Generate receipt' toggle"
+  ],
+  "inlineReferenceData": {
+    "name": "_methods (payment-method catalog)",
+    "file": "lib/screens/debts/record_payment_screen.dart",
+    "lines": "14-19 (default _method='Cash' at line 37)",
+    "values": [
+      {"value": "Cash", "description": "Most common"},
+      {"value": "Bank transfer", "description": "Paid into your account"},
+      {"value": "POS", "description": "Card on your terminal"},
+      {"value": "Paystack link", "description": "They pay online, auto-confirmed"}
+    ],
+    "reconciliationNote": "Inline top-level const catalog; also matches drift Payments.method default 'Cash'. Likely STAYS a local enum (payment method is a client-chosen label recorded verbatim into Payment.method), not a served resource. 'Paystack link' is the only method that ties to a backend seam (POST /debts/:id/pay-link + webhook auto-confirm); reconciliation decides serve-vs-local."
+  }
+}

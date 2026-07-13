@@ -1,0 +1,377 @@
+{
+  "version": 1,
+  "frozenAt": "2026-07-11",
+  "_note": "FROZEN (read-only truth). C-1 resolved: reminderTone third value = 'final' (supersede S-5). Money is integer kobo (S-1). IDs are client-minted UUIDv7 strings (S-2). Plan ids canonical lowercase (S-3). Roles coarse owner|staff (S-4). Every domain row carries businessId (JWT-injected, never in create payloads), updatedAt (server-authoritative), version (monotonic int for If-Match sync). Create payloads include client-minted id and are idempotent on a re-seen id.",
+  "sharedShapes": {
+    "ErrorEnvelope": "{ error: { code: string (VALIDATION_ERROR|UNAUTHENTICATED|FORBIDDEN|PLAN_REQUIRED|NOT_FOUND|VERSION_CONFLICT|RATE_LIMITED|INTERNAL), message: string, details?: array } } — per conventions.md",
+    "Paginated<T>": "{ data: T[], nextCursor: string|null } — cursor pagination, ?cursor&limit (default 20, max 100)",
+    "VersionConflict": "409 { error: {code:'VERSION_CONFLICT'}, current: <server row> } — returned when If-Match version is stale (conventions Offline-first sync)",
+    "syncFields": "every synced entity carries updatedAt (datetime, server), version (int); writes carry If-Match: version=N"
+  },
+  "resources": [
+    {
+      "name": "Auth",
+      "module": "auth",
+      "sourceScreens": ["login", "otp", "splash", "settings", "setup"],
+      "dependsOn": ["Staff", "Business"],
+      "tables": ["OtpCode (phone, codeHash, expiresAt, attempts, createdAt)", "RefreshToken (userId, tokenHash, rotatedFrom, revokedAt, expiresAt)"],
+      "endpoints": [
+        {"method": "POST", "path": "/auth/request-otp", "auth": "public", "body": [{"name": "phone", "type": "string"}], "response": {"status": 202, "shape": "{}"}, "roles": [], "notes": "ALWAYS 202 regardless of account existence (no enumeration). Generates hashed 6-digit code, 10-min expiry, rate-limited per phone + per IP. Sends via BulkSMSNigeria OtpSender (gateway:'otp')."},
+        {"method": "POST", "path": "/auth/verify-otp", "auth": "public", "body": [{"name": "phone", "type": "string"}, {"name": "code", "type": "string"}], "response": {"status": 200, "shape": "{ accessToken: string, refreshToken: string, user: User, business: Business|null }"}, "roles": [], "notes": "Max 5 attempts. Wrong/expired code -> 401 UNAUTHENTICATED; rate-limit -> 429 RATE_LIMITED. On success issues JWT access (claims sub=userId, businessId, role) + refresh. New phone -> creates User (business null until onboarding PUT /business). Existing -> returns user+business."},
+        {"method": "POST", "path": "/auth/refresh", "auth": "refresh-token", "body": [{"name": "refreshToken", "type": "string"}], "response": {"status": 200, "shape": "{ accessToken: string, refreshToken: string }"}, "roles": [], "notes": "Refresh rotation: issue new pair, revoke old; reuse of a revoked token -> revoke the chain + 401."},
+        {"method": "POST", "path": "/auth/logout", "auth": "bearer", "response": {"status": 204}, "roles": ["owner", "staff"], "notes": "Revokes the caller's refresh token."},
+        {"method": "GET", "path": "/me", "auth": "bearer", "response": {"status": 200, "shape": "{ user: User, business: Business|null }"}, "roles": ["owner", "staff"], "notes": "Session bootstrap (splash). 401 if token invalid/expired."}
+      ]
+    },
+    {
+      "name": "Business",
+      "module": "business",
+      "sourceScreens": ["setup", "business-profile", "templates", "settings", "dashboard", "subscription", "receipt", "send-reminder", "debt-detail"],
+      "dependsOn": [],
+      "fields": [
+        {"name": "id", "type": "string(uuidv7)", "nullable": false, "provenance": "screen", "supersede": "S-2"},
+        {"name": "businessName", "type": "string", "nullable": false},
+        {"name": "ownerName", "type": "string", "nullable": false},
+        {"name": "phone", "type": "string", "nullable": false, "note": "digits-only"},
+        {"name": "category", "type": "string", "nullable": false, "note": "free text; client suggestion lists stay local (setup/business-profile _categories diverge, not an enum)"},
+        {"name": "currency", "type": "string", "nullable": false, "note": "composed '<code> (<symbol>)' e.g. 'NGN (₦)'"},
+        {"name": "reminderTone", "type": "string(enum: gentle|friendly|final)", "nullable": false, "supersede": "S-5", "note": "third value = 'final' per C-1 ruling (product-truth T-27); frontend renames Firm->Final via UA-3"},
+        {"name": "plan", "type": "string(canonical: starter|market|business|enterprise)", "nullable": false, "provenance": "screen", "supersede": "S-3", "note": "server-authoritative entitlement key; fail-closed to starter"},
+        {"name": "paystackSubaccount", "type": "string", "nullable": true, "note": "set by PayoutAccount flow"},
+        {"name": "logoUrl", "type": "string", "nullable": true, "note": "anticipated; no upload endpoint built (out of scope) — nullable display field only"},
+        {"name": "branchId", "type": "string", "nullable": true, "note": "reserved for Enterprise; unused, not gated"},
+        {"name": "createdAt", "type": "datetime", "nullable": false},
+        {"name": "updatedAt", "type": "datetime", "nullable": false},
+        {"name": "version", "type": "int", "nullable": false}
+      ],
+      "endpoints": [
+        {"method": "GET", "path": "/business", "response": {"shape": "Business"}, "roles": ["owner", "staff"], "notes": "Current tenant profile (single row)."},
+        {"method": "PUT", "path": "/business", "body": [{"name": "businessName", "type": "string"}, {"name": "ownerName", "type": "string", "optional": true}, {"name": "phone", "type": "string", "optional": true}, {"name": "category", "type": "string", "optional": true}, {"name": "currency", "type": "string", "optional": true}, {"name": "reminderTone", "type": "string", "optional": true}], "response": {"shape": "Business"}, "roles": ["owner"], "notes": "Upsert of the single per-tenant profile (setup onboarding CREATE on first call, else UPDATE — business-profile + templates write subsets). Creates the Business tenant + links the caller as owner on first call. plan/paystackSubaccount are set by billing/payout flows, not here."}
+      ]
+    },
+    {
+      "name": "Staff",
+      "module": "staff",
+      "sourceScreens": ["staff", "staff-permissions", "settings"],
+      "dependsOn": ["Business"],
+      "supersedesApplied": ["S-4"],
+      "fields": [
+        {"name": "id", "type": "string(uuidv7)", "nullable": false, "supersede": "S-2"},
+        {"name": "businessId", "type": "string", "nullable": false, "note": "JWT-injected"},
+        {"name": "name", "type": "string", "nullable": false, "note": "placeholder 'Invited · <phone>' until invitee sets it"},
+        {"name": "phone", "type": "string", "nullable": false, "note": "natural key within a business"},
+        {"name": "role", "type": "string(enum: owner|staff)", "nullable": false, "supersede": "S-4", "note": "coarse model; granular permission matrix superseded"},
+        {"name": "active", "type": "boolean", "nullable": false},
+        {"name": "createdAt", "type": "datetime", "nullable": false},
+        {"name": "updatedAt", "type": "datetime", "nullable": false},
+        {"name": "version", "type": "int", "nullable": false}
+      ],
+      "endpoints": [
+        {"method": "GET", "path": "/staff", "response": {"shape": "Staff[]"}, "roles": ["owner"], "notes": "Business members incl. owner (owner rendered first). Also returns seat usage {seatCap, seatsUsed} derived from plan (limitsFor(plan).staffSeats: starter 0, market 1, business 5, enterprise unlimited)."},
+        {"method": "POST", "path": "/staff", "body": [{"name": "phone", "type": "string"}, {"name": "name", "type": "string", "optional": true}, {"name": "role", "type": "string(owner|staff, coerced to staff)"}], "response": {"status": 201, "shape": "Staff"}, "roles": ["owner"], "notes": "Invite. Seat-cap enforced: exceeding plan seats -> 403 PLAN_REQUIRED {requiredPlan}. role coerced to staff (owner is unique)."},
+        {"method": "PATCH", "path": "/staff/:id", "body": [{"name": "active", "type": "boolean"}], "response": {"shape": "Staff"}, "roles": ["owner"], "notes": "Activate/deactivate (staff-permissions screen deactivate). Owner cannot be deactivated."}
+      ]
+    },
+    {
+      "name": "Customer",
+      "module": "customers",
+      "sourceScreens": ["customers", "customer-detail", "add-customer", "record-debt", "search", "receipt"],
+      "dependsOn": ["Business", "CreditLedger"],
+      "fields": [
+        {"name": "id", "type": "string(uuidv7)", "nullable": false, "supersede": "S-2"},
+        {"name": "businessId", "type": "string", "nullable": false, "note": "JWT-injected"},
+        {"name": "name", "type": "string", "nullable": false},
+        {"name": "phone", "type": "string", "nullable": false, "note": "drift default '' ; add-customer requires 11 digits"},
+        {"name": "address", "type": "string", "nullable": true},
+        {"name": "note", "type": "string", "nullable": true},
+        {"name": "createdAt", "type": "datetime", "nullable": false},
+        {"name": "updatedAt", "type": "datetime", "nullable": false},
+        {"name": "version", "type": "int", "nullable": false}
+      ],
+      "viewFields": [
+        {"name": "owed", "type": "integer(kobo)", "supersede": "S-1", "note": "CustomerView aggregate: sum(remaining) over non-archived debts"},
+        {"name": "debtCount", "type": "integer", "note": "open debts (remaining>0)"},
+        {"name": "worstStatus", "type": "string(DebtStatus)", "note": "highest-severity open-debt status; 'paid' when none open"},
+        {"name": "lastActivityAt", "type": "datetime", "nullable": true},
+        {"name": "lastPaymentAt", "type": "datetime", "nullable": true},
+        {"name": "lastReminderAt", "type": "datetime", "nullable": true},
+        {"name": "earliestOverdueDue", "type": "datetime", "nullable": true}
+      ],
+      "endpoints": [
+        {"method": "GET", "path": "/customers", "query": [{"name": "cursor", "optional": true}, {"name": "limit", "optional": true}, {"name": "filter", "type": "all|owing|overdue|paid-up", "optional": true}, {"name": "sort", "type": "most-owed|recently-active|name", "optional": true}, {"name": "q", "type": "string", "optional": true, "note": "name substring or phone digits (traditional search, never AI)"}], "response": {"shape": "Paginated<CustomerView>"}, "roles": ["owner", "staff"], "notes": "Server-side filter/sort/search + cursor pagination (roster is unbounded). Returns Customer + computed aggregates."},
+        {"method": "GET", "path": "/customers/:id", "response": {"shape": "CustomerView"}, "roles": ["owner", "staff"]},
+        {"method": "POST", "path": "/customers", "body": [{"name": "id", "type": "string(uuidv7)"}, {"name": "name", "type": "string"}, {"name": "phone", "type": "string"}, {"name": "note", "type": "string", "optional": true}, {"name": "address", "type": "string", "optional": true}], "response": {"status": 201, "shape": "Customer"}, "roles": ["owner", "staff"], "notes": "Idempotent on id (offline retry)."},
+        {"method": "DELETE", "path": "/customers/:id", "response": {"shape": "Customer"}, "roles": ["owner"], "notes": "Owner-only (S-4). Cascade: soft-archives the customer's debts (deleted=true), not a hard delete."},
+        {"method": "GET", "path": "/customers/:id/activity", "response": {"shape": "ActivityItem[]"}, "roles": ["owner", "staff"], "notes": "Per-customer timeline (payments+debts+sent reminders merged, at desc)."},
+        {"method": "GET", "path": "/customers/:id/risk", "response": {"status": 501, "shape": "CustomerRisk {customerId, score, band}"}, "roles": ["owner", "staff"], "notes": "501 scaffold (sourceScreens: []). When live: debits 5 AI credits on success (credit-ledger), behind LlmProvider."}
+      ]
+    },
+    {
+      "name": "Debt",
+      "module": "debts",
+      "sourceScreens": ["debts", "debt-detail", "record-debt", "record-payment", "customer-detail", "dashboard", "receipt", "search", "activity", "subscription"],
+      "dependsOn": ["Customer", "Business"],
+      "fields": [
+        {"name": "id", "type": "string(uuidv7)", "nullable": false, "supersede": "S-2"},
+        {"name": "businessId", "type": "string", "nullable": false},
+        {"name": "customerId", "type": "string(uuidv7 FK)", "nullable": false, "supersede": "S-2"},
+        {"name": "amount", "type": "integer(kobo)", "nullable": false, "supersede": "S-1", "note": "principal"},
+        {"name": "note", "type": "string", "nullable": true},
+        {"name": "dueDate", "type": "datetime", "nullable": true},
+        {"name": "createdAt", "type": "datetime", "nullable": false},
+        {"name": "lastReminderAt", "type": "datetime", "nullable": true},
+        {"name": "nextReminderAt", "type": "datetime", "nullable": true},
+        {"name": "deleted", "type": "boolean", "nullable": false, "note": "soft-delete/archive flag"},
+        {"name": "updatedAt", "type": "datetime", "nullable": false},
+        {"name": "version", "type": "int", "nullable": false}
+      ],
+      "viewFields": [
+        {"name": "paidAmount", "type": "integer(kobo)", "supersede": "S-1", "note": "sum(payments.amount)"},
+        {"name": "remaining", "type": "integer(kobo)", "supersede": "S-1", "note": "clamp(amount - paidAmount)"},
+        {"name": "status", "type": "string(enum: outstanding|partial|overdue|scheduled|reminder|paid)", "note": "DERIVED server-side, never stored"},
+        {"name": "customer", "type": "{id,name,phone}", "note": "embedded"}
+      ],
+      "endpoints": [
+        {"method": "GET", "path": "/debts", "query": [{"name": "cursor", "optional": true}, {"name": "limit", "optional": true}, {"name": "status", "type": "active|overdue|paid|archived", "optional": true}, {"name": "sort", "type": "most-owed|soonest-due|recently-added", "optional": true}, {"name": "q", "type": "string", "optional": true}], "response": {"shape": "Paginated<DebtView>"}, "roles": ["owner", "staff"], "notes": "status=archived returns deleted=true rows."},
+        {"method": "GET", "path": "/debts/:id", "response": {"shape": "DebtView"}, "roles": ["owner", "staff"]},
+        {"method": "POST", "path": "/debts", "body": [{"name": "id", "type": "string(uuidv7)"}, {"name": "customerId", "type": "string"}, {"name": "amount", "type": "integer(kobo)"}, {"name": "note", "type": "string", "optional": true}, {"name": "dueDate", "type": "datetime", "optional": true}], "response": {"status": 201, "shape": "DebtView"}, "roles": ["owner", "staff"], "notes": "Idempotent on id. SIDE EFFECT: triggers reminder-engine schedule generation (-3/due/+3/+7)."},
+        {"method": "PATCH", "path": "/debts/:id", "body": [{"name": "amount", "type": "integer(kobo)", "optional": true}, {"name": "note", "type": "string", "optional": true}, {"name": "dueDate", "type": "datetime", "optional": true}, {"name": "clearDueDate", "type": "boolean", "optional": true}], "response": {"shape": "DebtView"}, "roles": ["owner", "staff"], "notes": "If-Match version. clearDueDate=true explicitly nulls dueDate."},
+        {"method": "DELETE", "path": "/debts/:id", "response": {"shape": "DebtView"}, "roles": ["owner"], "notes": "Owner-only (S-4). Soft delete (deleted=true)."},
+        {"method": "POST", "path": "/debts/:id/restore", "response": {"shape": "DebtView"}, "roles": ["owner", "staff"], "notes": "Un-archive (deleted=false)."},
+        {"method": "POST", "path": "/debts/:id/pay-link", "response": {"shape": "PayLink {url: string}"}, "roles": ["owner", "staff"], "notes": "Creates Paystack payment request against the business subaccount (paystack declaration)."},
+        {"method": "GET", "path": "/debts/:id/payments", "response": {"shape": "Payment[]"}, "roles": ["owner", "staff"], "notes": "newest-first."},
+        {"method": "GET", "path": "/debts/:id/reminders", "response": {"shape": "Reminder[]"}, "roles": ["owner", "staff"], "notes": "reminder HISTORY timeline (sent rows)."},
+        {"method": "GET", "path": "/debts/:id/reminder-schedule", "response": {"shape": "ReminderScheduleStep[] {offsetLabel(3 days before due|On due date|3 days overdue|Final follow-up), date, status(sent|pending)}"}, "roles": ["owner", "staff"], "notes": "The auto-reminder schedule card. Derived from dueDate offsets -3/0/+3/+7 (reminder-engine). Empty when paid/archived/no dueDate."}
+      ]
+    },
+    {
+      "name": "Payment",
+      "module": "payments",
+      "sourceScreens": ["record-payment", "debt-detail", "receipt", "customer-detail", "dashboard", "activity"],
+      "dependsOn": ["Debt"],
+      "fields": [
+        {"name": "id", "type": "string(uuidv7)", "nullable": false, "supersede": "S-2"},
+        {"name": "businessId", "type": "string", "nullable": false},
+        {"name": "debtId", "type": "string(uuidv7 FK)", "nullable": false, "supersede": "S-2"},
+        {"name": "amount", "type": "integer(kobo)", "nullable": false, "supersede": "S-1"},
+        {"name": "method", "type": "string", "nullable": false, "note": "client label: Cash|Bank transfer|POS|Paystack link|Settled outside OweMe (local enum, recorded verbatim)"},
+        {"name": "reference", "type": "string", "nullable": false, "note": "server-minted receipt number, e.g. OWM-00418 (traditional software, never AI)"},
+        {"name": "createdAt", "type": "datetime", "nullable": false, "note": "server-authoritative"},
+        {"name": "updatedAt", "type": "datetime", "nullable": false},
+        {"name": "version", "type": "int", "nullable": false}
+      ],
+      "endpoints": [
+        {"method": "POST", "path": "/debts/:id/payments", "body": [{"name": "id", "type": "string(uuidv7)"}, {"name": "amount", "type": "integer(kobo)"}, {"name": "method", "type": "string"}], "response": {"status": 201, "shape": "Payment"}, "roles": ["owner", "staff"], "notes": "Idempotent on id. Partial allowed (amount<=remaining, >0; overpayment -> 422). Auto-updates debt balance; reaching 0 stops the reminder schedule. Mints reference."},
+        {"method": "GET", "path": "/payments/:id", "response": {"shape": "{ payment: Payment, debt: DebtView, business: {businessName} }"}, "roles": ["owner", "staff"], "notes": "Receipt fetch — payment + enough of debt/customer/business to render."},
+        {"method": "POST", "path": "/debts/:id/undo-payment", "response": {"shape": "Payment"}, "roles": ["owner", "staff"], "notes": "Deletes the debt's most-recent payment (reopen); returns the removed Payment."}
+      ]
+    },
+    {
+      "name": "Reminder",
+      "module": "reminders",
+      "sourceScreens": ["reminders", "send-reminder", "debt-detail"],
+      "dependsOn": ["Debt", "SendAllowanceLedger"],
+      "declarations": ["reminder-engine"],
+      "fields": [
+        {"name": "id", "type": "string(uuidv7)", "nullable": false, "supersede": "S-2"},
+        {"name": "businessId", "type": "string", "nullable": false},
+        {"name": "debtId", "type": "string(uuidv7 FK)", "nullable": false, "supersede": "S-2"},
+        {"name": "channel", "type": "string(enum: sms|whatsapp|call|manual|printable)", "nullable": false, "note": "UNION resolution: DB had sms|whatsapp|call; handoff §2.1 keeps 'call' as recorded history; conventions add manual|printable. sms/whatsapp metered; call/manual/printable recorded-only + free."},
+        {"name": "status", "type": "string(enum: scheduled|sent|failed)", "nullable": false},
+        {"name": "message", "type": "string", "nullable": true, "note": "composed at send; may be persisted server-side for history (as-built not stored on the row)"},
+        {"name": "scheduledFor", "type": "datetime", "nullable": true},
+        {"name": "sentAt", "type": "datetime", "nullable": true},
+        {"name": "payLinkUrl", "type": "string", "nullable": true},
+        {"name": "createdAt", "type": "datetime", "nullable": false},
+        {"name": "updatedAt", "type": "datetime", "nullable": false},
+        {"name": "version", "type": "int", "nullable": false}
+      ],
+      "endpoints": [
+        {"method": "GET", "path": "/reminders", "query": [{"name": "cursor", "optional": true}, {"name": "limit", "optional": true}, {"name": "status", "type": "scheduled|sent|failed", "optional": true}], "response": {"shape": "Paginated<Reminder + {debt, customer}>"}, "roles": ["owner", "staff"]},
+        {"method": "POST", "path": "/reminders", "body": [{"name": "id", "type": "string(uuidv7)"}, {"name": "debtId", "type": "string"}, {"name": "channel", "type": "string(sms|whatsapp|call|manual|printable)"}, {"name": "message", "type": "string", "optional": true}, {"name": "payLinkUrl", "type": "string", "optional": true}, {"name": "scheduledFor", "type": "datetime", "optional": true}], "response": {"status": 201, "shape": "Reminder"}, "roles": ["owner", "staff"], "notes": "Records reminder history (Mode-1 deep-link already ships client-side). sms/whatsapp automated sends debit SendAllowanceLedger -> exhaustion 403 PLAN_REQUIRED; call/manual/printable recorded-only + free. Idempotent on id."},
+        {"method": "POST", "path": "/reminders/:id/retry", "response": {"shape": "Reminder"}, "roles": ["owner", "staff"], "notes": "Failed rows only; regenerates pay-link + re-sends."}
+      ]
+    },
+    {
+      "name": "Notification",
+      "module": "notifications",
+      "sourceScreens": ["notifications", "dashboard"],
+      "dependsOn": ["Business"],
+      "fields": [
+        {"name": "id", "type": "string(uuidv7)", "nullable": false, "supersede": "S-2"},
+        {"name": "businessId", "type": "string", "nullable": false},
+        {"name": "title", "type": "string", "nullable": false},
+        {"name": "body", "type": "string", "nullable": false, "note": "default ''"},
+        {"name": "kind", "type": "string(enum: payment|overdue|reminder|insight|info)", "nullable": false, "note": "code field is 'kind' not 'type'; default info"},
+        {"name": "read", "type": "boolean", "nullable": false, "note": "default false"},
+        {"name": "createdAt", "type": "datetime", "nullable": false},
+        {"name": "updatedAt", "type": "datetime", "nullable": false},
+        {"name": "version", "type": "int", "nullable": false}
+      ],
+      "endpoints": [
+        {"method": "GET", "path": "/notifications", "query": [{"name": "cursor", "optional": true}, {"name": "limit", "optional": true}], "response": {"shape": "Paginated<Notification>"}, "roles": ["owner"], "notes": "createdAt desc. Also backs GET /dashboard hasUnread flag."},
+        {"method": "POST", "path": "/notifications/mark-all-read", "response": {"status": 204}, "roles": ["owner"], "notes": "Sets read=true for all rows."}
+      ]
+    },
+    {
+      "name": "NotificationPreferences",
+      "module": "notification-preferences",
+      "sourceScreens": ["notification-settings"],
+      "dependsOn": ["Business"],
+      "ruling": "servePersisted (user ruling 2026-07-11)",
+      "fields": [
+        {"name": "businessId", "type": "string", "nullable": false, "note": "one row per business/owner"},
+        {"name": "payments", "type": "boolean", "nullable": false, "note": "default true"},
+        {"name": "overdue", "type": "boolean", "nullable": false, "note": "default true"},
+        {"name": "delivery", "type": "boolean", "nullable": false, "note": "default true"},
+        {"name": "weekly", "type": "boolean", "nullable": false, "note": "default false"},
+        {"name": "updatedAt", "type": "datetime", "nullable": false},
+        {"name": "version", "type": "int", "nullable": false}
+      ],
+      "endpoints": [
+        {"method": "GET", "path": "/notification-preferences", "response": {"shape": "NotificationPreferences"}, "roles": ["owner"], "notes": "Backend push (owner-only surface) honors these."},
+        {"method": "PUT", "path": "/notification-preferences", "body": [{"name": "payments", "type": "boolean"}, {"name": "overdue", "type": "boolean"}, {"name": "delivery", "type": "boolean"}, {"name": "weekly", "type": "boolean"}], "response": {"shape": "NotificationPreferences"}, "roles": ["owner"]}
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "module": "dashboard",
+      "sourceScreens": ["dashboard"],
+      "dependsOn": ["Debt", "Payment"],
+      "derived": true,
+      "endpoints": [
+        {"method": "GET", "path": "/dashboard", "response": {"shape": "{ outstandingTotal:int(kobo), owingCustomerCount:int, recoveredThisMonth:int(kobo), dueTodayTotal:int(kobo), overdueTotal:int(kobo), overdueCount:int, activity: ActivityItem[] (cap 8), hasAnyDebts:bool, hasAnyCustomers:bool, hasUnread:bool }"}, "roles": ["owner", "staff"], "notes": "Core-recovery, never gated. Money kobo (S-1). Insight slot is the 501 insights surface (not included here)."}
+      ]
+    },
+    {
+      "name": "Activity",
+      "module": "activity",
+      "sourceScreens": ["activity", "dashboard", "customer-detail"],
+      "dependsOn": ["Debt", "Payment", "Reminder"],
+      "derived": true,
+      "shape": "ActivityItem { kind: payment|debt|reminder, title: string, subtitle: string, amount: int(kobo)|null, at: datetime }",
+      "endpoints": [
+        {"method": "GET", "path": "/activity", "query": [{"name": "cursor", "optional": true}, {"name": "limit", "optional": true}], "response": {"shape": "Paginated<ActivityItem>"}, "roles": ["owner", "staff"], "notes": "Derived union (payments+debts+sent reminders), at desc. Excludes items whose parent debt is gone."}
+      ]
+    },
+    {
+      "name": "PayoutAccount",
+      "module": "payout-account",
+      "sourceScreens": ["payout-account", "settings"],
+      "dependsOn": ["Business"],
+      "declarations": ["paystack"],
+      "fields": [
+        {"name": "businessId", "type": "string", "nullable": false},
+        {"name": "bankCode", "type": "string", "nullable": false},
+        {"name": "accountNumber", "type": "string", "nullable": false, "note": "10-digit NUBAN"},
+        {"name": "accountName", "type": "string", "nullable": false, "note": "resolved via Paystack"}
+      ],
+      "endpoints": [
+        {"method": "GET", "path": "/banks", "response": {"shape": "Bank[] {code, name}"}, "roles": ["owner"], "notes": "Proxies Paystack bank list."},
+        {"method": "POST", "path": "/payout-account/resolve", "body": [{"name": "bankCode", "type": "string"}, {"name": "accountNumber", "type": "string(10-digit)"}], "response": {"shape": "{ accountName: string }"}, "roles": ["owner"], "notes": "Paystack name lookup; invalid account -> error envelope."},
+        {"method": "GET", "path": "/payout-account", "response": {"shape": "PayoutAccount|null"}, "roles": ["owner"]},
+        {"method": "PUT", "path": "/payout-account", "body": [{"name": "bankCode", "type": "string"}, {"name": "accountNumber", "type": "string"}, {"name": "accountName", "type": "string"}], "response": {"shape": "PayoutAccount"}, "roles": ["owner"], "notes": "Creates/updates the business's Paystack subaccount from these 3 fields; nothing else stored. Writes Business.paystackSubaccount."}
+      ]
+    },
+    {
+      "name": "Plan",
+      "module": "plans",
+      "sourceScreens": ["compare-plans", "subscription", "usage", "upgrade", "debt-detail", "staff"],
+      "dependsOn": [],
+      "reference": true,
+      "shape": "Plan { id: starter|market|business|enterprise, name, pricePerMonth: int(kobo, 0=free), tagline, features: string[], productId: string|null, talkToSales: bool, recommended: bool, limits: { sendsPerMonth:int(-1 fair-use), aiCreditsPerMonth:int(-1 fair-use), staffSeats:int(-1 unlimited), bvumCeiling:int(kobo)|null } }",
+      "catalog": "starter free / market ₦2,500 / business ₦6,000 / enterprise from ₦18,000 (talkToSales). Prices -> kobo per S-1 (0=free; enterprise off-store). Matches billing.dart kPlans (f476925). Allowances per conventions Metering.",
+      "endpoints": [
+        {"method": "GET", "path": "/plans", "response": {"shape": "Plan[]"}, "roles": ["owner", "staff"], "notes": "Server-authoritative plan/pricing catalog (replaces inline kPlans/_tiers)."}
+      ]
+    },
+    {
+      "name": "Subscription",
+      "module": "billing",
+      "sourceScreens": ["subscription", "upgrade", "billing-history", "usage", "settings"],
+      "dependsOn": ["Business", "Plan", "CreditLedger", "SendAllowanceLedger"],
+      "declarations": ["iap"],
+      "fields": [
+        {"name": "businessId", "type": "string", "nullable": false},
+        {"name": "planId", "type": "string(canonical)", "nullable": false},
+        {"name": "entitlementState", "type": "string(enum: none|pending|active|gracePeriod|expired)", "nullable": false},
+        {"name": "activePlanId", "type": "string(canonical)", "nullable": false},
+        {"name": "renewalAt", "type": "datetime", "nullable": true, "note": "server-owned (was hardcoded mock)"}
+      ],
+      "billingTransaction": "BillingTransaction { id, businessId, kind: subscription|messages-bundle|ai-bundle, productId, label, amount: int(kobo), createdAt }",
+      "endpoints": [
+        {"method": "GET", "path": "/subscription", "response": {"shape": "{ planId, entitlementState, activePlanId, renewalAt }"}, "roles": ["owner"], "notes": "Server is SOLE entitlement authority (client display-only)."},
+        {"method": "POST", "path": "/billing/verify-receipt", "body": [{"name": "platform", "type": "ios|android"}, {"name": "productId", "type": "string"}, {"name": "receipt", "type": "string"}], "response": {"shape": "{ entitlement?: Subscription, ledger?: {sendAllowance|aiCredits} }"}, "roles": ["owner"], "notes": "Verifies receipt with Apple/Google (iap declaration), then routes by productId: plan product -> sets Business.plan + entitlement; oweme_sends_* -> credits SendAllowanceLedger; oweme_ai_credits_* -> credits CreditLedger. Idempotent on store transaction id. Also credited out-of-band via POST /webhooks/iap."},
+        {"method": "GET", "path": "/billing/history", "query": [{"name": "cursor", "optional": true}, {"name": "limit", "optional": true}], "response": {"shape": "Paginated<BillingTransaction>"}, "roles": ["owner"], "notes": "IAP purchase history (renewals + bundles). Money kobo."}
+      ]
+    },
+    {
+      "name": "Usage",
+      "module": "ledgers",
+      "sourceScreens": ["usage", "subscription", "record-debt"],
+      "dependsOn": ["Business", "Plan"],
+      "declarations": ["credit-ledger", "allowance-ledger"],
+      "tables": ["CreditLedger (businessId, balance, monthlyGrant, periodStart)", "SendAllowanceLedger (businessId, remaining, monthlyGrant, periodStart)"],
+      "note": "Owns both ledgers + their debit/credit services (imported by reminders=debitSend, voice/insights/risk=debitCredits, billing=creditBundle). Weighted AI debit: voice 1, insight 5, risk 5, debit-on-success only. Monthly grant per plan.",
+      "endpoints": [
+        {"method": "GET", "path": "/usage", "response": {"shape": "{ sendAllowance: {used, remaining, monthlyGrant, periodStart}, aiCredits: {used, balance, monthlyGrant, periodStart} }"}, "roles": ["owner"], "notes": "Both meters (mocked prefs as-built -> real ledgers). Caps from Plan limits."}
+      ]
+    },
+    {
+      "name": "Bvum",
+      "module": "bvum",
+      "sourceScreens": ["subscription"],
+      "dependsOn": ["Debt"],
+      "declarations": ["bvum-engine"],
+      "endpoints": [
+        {"method": "GET", "path": "/bvum", "response": {"shape": "{ value: int(kobo), ceiling: int(kobo)|null, recommendedPlan: string|null, windowDays: 30 }"}, "roles": ["owner"], "notes": "30-day observation; weights receivables 40/credit-issued 30/recovery 15/active-debtors 10/complexity 5. Ceilings starter/market ₦2M, business ₦20M, enterprise null. RECOMMENDATION only — never auto-changes plan (was computed client-side)."}
+      ]
+    },
+    {
+      "name": "Voice",
+      "module": "voice",
+      "sourceScreens": ["record-debt"],
+      "dependsOn": ["CreditLedger"],
+      "declarations": ["llm-provider", "credit-ledger"],
+      "endpoints": [
+        {"method": "POST", "path": "/voice/parse", "body": [{"name": "transcript", "type": "string"}, {"name": "knownCustomers", "type": "string[]", "optional": true}], "response": {"shape": "{ customerName: string|null, amount: int(kobo), description: string|null, dueDate: datetime|null }"}, "roles": ["owner", "staff"], "notes": "Transcript-only (audio upload path 501). Debits 1 AI credit on success (credit-ledger); exhaustion -> 403 PLAN_REQUIRED. Behind LlmProvider."}
+      ]
+    },
+    {
+      "name": "Insights",
+      "module": "insights",
+      "sourceScreens": ["dashboard"],
+      "dependsOn": ["CreditLedger"],
+      "declarations": ["llm-provider", "credit-ledger", "insights-dashboard"],
+      "endpoints": [
+        {"method": "GET", "path": "/insights/dashboard", "response": {"status": 501, "shape": "{ insights: object }"}, "roles": ["owner"], "notes": "501 scaffold (sourceScreens rendering it are stubs). Debits 5 AI credits when live. Behind LlmProvider."}
+      ]
+    },
+    {
+      "name": "Sync",
+      "module": "sync",
+      "sourceScreens": ["backup", "settings"],
+      "dependsOn": ["Customer", "Debt", "Payment", "Reminder"],
+      "declarations": ["sync"],
+      "endpoints": [
+        {"method": "GET", "path": "/sync", "query": [{"name": "since", "type": "string(cursor)", "optional": true}], "response": {"shape": "{ changes: {customers:[], debts:[], payments:[], reminders:[]}, tombstones: {customers:[], debts:[], payments:[], reminders:[]}, cursor: string }"}, "roles": ["owner", "staff"], "notes": "Delta pull across synced entities since cursor + tombstones. All API writes carry If-Match: version=N; stale -> 409 {error, current}. LWW per field-set. Local writes are truth until synced."},
+        {"method": "GET", "path": "/sync/status", "response": {"shape": "{ lastSyncedAt: datetime|null, pendingCount: int }"}, "roles": ["owner", "staff"], "notes": "Backs the Backup screen status (pendingCount is client-side; lastSyncedAt is the cursor watermark)."}
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "module": "webhooks",
+      "sourceScreens": [],
+      "dependsOn": ["Payment", "Subscription", "Reminder"],
+      "declarations": ["paystack", "iap"],
+      "endpoints": [
+        {"method": "POST", "path": "/webhooks/paystack", "auth": "provider-signature", "response": {"status": 200}, "roles": [], "notes": "Verify Paystack signature (PAYSTACK_WEBHOOK_SECRET). Idempotent on data.reference. Reconciles debtor pay-link charges -> records Payment/marks debt paid."},
+        {"method": "POST", "path": "/webhooks/iap", "auth": "provider-signature", "response": {"status": 200}, "roles": [], "notes": "App Store Server Notifications / Play RTDN. Subscription lifecycle + out-of-band bundle credits. Verify per platform."}
+      ]
+    }
+  ],
+  "sharedInfrastructure": {
+    "builtBy": "schema/pre-step agents in src/common (Phase 4)",
+    "components": ["JwtAuthGuard (Bearer)", "RolesGuard + @Roles()", "EntitlementsGuard (-> 403 PLAN_REQUIRED)", "TenantMiddleware (businessId scoping from JWT)", "HttpExceptionFilter (ErrorEnvelope)", "ValidationPipe (whitelist+forbidNonWhitelisted+transform)", "If-Match/version interceptor (-> 409 VERSION_CONFLICT)", "shared DTOs (Paginated, ErrorEnvelope)", "uuidv7 + kobo money utils", "OtpSender + MessageSender interfaces (BulkSMSNigeria)", "PaystackGateway, ReceiptVerifier, LlmProvider interfaces"]
+  }
+}

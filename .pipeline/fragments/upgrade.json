@@ -1,0 +1,53 @@
+{
+  "screenId": "upgrade",
+  "notes": "UpgradeScreen + _UpgradeSuccess only (subscription_screens.dart ~1087-1366). Real seam is billing.buyPlan (IAP purchase -> OS payment sheet -> receipt/purchaseToken sent to backend for SERVER-SIDE verification via BillingService._verifyWithBackend -> backend sets the business plan, server-authoritative) then repo.saveBusiness mirrors the canonical plan id locally so every screen reflects it. The screen hardcodes the target plan to 'business' (_plan => kPlans.firstWhere(id=='business'), line ~1097). Plan data (name/price/features/productId) is read from kPlans in lib/data/billing/billing.dart. Per conventions the server is the SOLE entitlement authority and plan changes are user-confirmed (the Subscribe/Continue button is the confirmation). INLINE COPY (not data, note only): hardcoded Business feature bullets at lines ~1180-1185 and ~1324-1328, and renewal-date strings 'renews 6 Aug' at ~1310-1311; 'per month · starts today' ~1167; store-lifecycle disclaimer copy ~1207-1215. Do NOT invent an endpoint path; IAP receipt-verification endpoint shape is a backend-design decision.",
+  "reads": [
+    {
+      "entity": "Plan",
+      "source": "kPlans (lib/data/billing/billing.dart) — static catalog, not a repo/db read; screen selects id=='business'",
+      "fields": [
+        {"name": "id", "type": "string(canonical: starter|market|business|enterprise)", "nullable": false},
+        {"name": "name", "type": "string", "nullable": false},
+        {"name": "pricePerMonth", "type": "int(naira; 0=free, -1=talk-to-sales)", "nullable": false},
+        {"name": "tagline", "type": "string", "nullable": false},
+        {"name": "features", "type": "list<string>", "nullable": false},
+        {"name": "productId", "type": "string(store product id; null for starter/enterprise)", "nullable": true},
+        {"name": "talkToSales", "type": "bool", "nullable": false}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "buyPlan",
+      "kind": "custom",
+      "entity": "Entitlement",
+      "userConfirmed": true,
+      "description": "IAP purchase of an auto-renewable subscription plan. Client opens OS payment sheet (billing.buyPlan), purchase stream yields the store receipt/purchase token, which is posted to the backend for server-side verification with Apple/Google; backend validates the receipt and sets the business plan (server is sole authority). On success repo.saveBusiness(BusinessProfilesCompanion(plan: Value(_plan.id))) mirrors the canonical plan id locally.",
+      "payload": [
+        {"name": "planId", "type": "string(canonical target plan id, e.g. 'business')"},
+        {"name": "productId", "type": "string(store product id from Plan.productId, e.g. 'oweme_business_monthly')"},
+        {"name": "platform", "type": "string(app_store|play_store; source of the receipt)"},
+        {"name": "receipt", "type": "string(purchase.verificationData.serverVerificationData — store receipt / purchase token)"}
+      ],
+      "expectedResponse": {
+        "entity": "Entitlement",
+        "cardinality": "single",
+        "fields": [
+          {"name": "activePlanId", "type": "string(canonical plan id set server-side)"},
+          {"name": "entitlementState", "type": "enum(none|pending|active|gracePeriod|expired)"}
+        ]
+      }
+    }
+  ],
+  "authContext": {"requiresAuth": true, "rolesObserved": ["owner"]},
+  "special": {"realtime": false, "uploads": false, "downloads": false},
+  "uiStatesHandled": [
+    "purchase-pending (billing.entitlement == EntitlementState.pending -> PrimaryButton loading spinner)",
+    "purchase-success (_success flag flips to _UpgradeSuccess confirmation screen after saveBusiness)",
+    "purchase-error/canceled (entitlement reverts to none; button re-enabled)",
+    "store-unavailable fallback (simulator/desktop/off-store: local demo unlock of active state)"
+  ]
+}

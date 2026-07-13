@@ -1,0 +1,285 @@
+// OweMe API — Prisma schema
+// Production target: PostgreSQL — switch provider to postgresql and DATABASE_URL; enums stay app-validated strings for portability.
+//
+// Dev/test datasource is SQLite (zero external services for contract tests).
+// Conventions enforced here (see .pipeline/conventions.md + registry.json):
+//   - Money = Int (kobo, minor units). Never floats.               [S-1]
+//   - id    = String (client-minted UUIDv7). Never autoincrement.  [S-2]
+//   - Enums modeled as String + app-level (class-validator) checks. No Prisma native enums (SQLite lacks them).
+//   - Every business-owned row carries businessId (FK to Business).
+//   - Every SYNCED entity carries updatedAt (@updatedAt) + version (monotonic Int, for If-Match).
+//     Synced: Business, Staff, Customer, Debt, Payment, Reminder, Notification, NotificationPreferences.
+//     Sync delta set: Customer, Debt, Payment, Reminder.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Tenant root
+// ---------------------------------------------------------------------------
+model Business {
+  id                 String  @id
+  businessName       String
+  ownerName          String
+  phone              String // digits-only
+  category           String // free text
+  currency           String // composed '<code> (<symbol>)'
+  reminderTone       String // enum: gentle|friendly|final  (S-5)
+  plan               String  @default("starter") // canonical: starter|market|business|enterprise (S-3); fail-closed to starter
+  paystackSubaccount String?
+  logoUrl            String?
+  branchId           String? // reserved for Enterprise; unused, not gated
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  version            Int      @default(0)
+
+  staff                   Staff[]
+  customers               Customer[]
+  debts                   Debt[]
+  payments                Payment[]
+  reminders               Reminder[]
+  notifications           Notification[]
+  billingTransactions     BillingTransaction[]
+  notificationPreferences NotificationPreferences?
+  payoutAccount           PayoutAccount?
+  subscription            Subscription?
+  creditLedger            CreditLedger?
+  sendAllowanceLedger     SendAllowanceLedger?
+}
+
+// ---------------------------------------------------------------------------
+// Auth (users/members + OTP + refresh tokens)
+// ---------------------------------------------------------------------------
+model Staff {
+  id         String   @id
+  businessId String
+  name       String // placeholder 'Invited · <phone>' until invitee sets it
+  phone      String // natural key within a business
+  role       String // enum: owner|staff  (S-4)
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  version    Int      @default(0)
+
+  business      Business       @relation(fields: [businessId], references: [id])
+  refreshTokens RefreshToken[]
+
+  @@unique([businessId, phone])
+  @@index([businessId])
+}
+
+model OtpCode {
+  id        String   @id
+  phone     String
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+}
+
+model RefreshToken {
+  id          String    @id
+  userId      String // references Staff.id
+  tokenHash   String
+  rotatedFrom String?
+  revokedAt   DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  user Staff @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+// ---------------------------------------------------------------------------
+// Domain (synced delta set: Customer, Debt, Payment, Reminder)
+// ---------------------------------------------------------------------------
+model Customer {
+  id         String   @id
+  businessId String
+  name       String
+  phone      String   @default("") // add-customer requires 11 digits; drift default ''
+  address    String?
+  note       String?
+  deleted    Boolean  @default(false) // soft-delete flag; deleted rows surface as sync tombstones
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  version    Int      @default(0)
+
+  business Business @relation(fields: [businessId], references: [id])
+  debts    Debt[]
+
+  @@index([businessId])
+}
+
+model Debt {
+  id             String    @id
+  businessId     String
+  customerId     String
+  amount         Int // kobo (S-1) — principal
+  note           String?
+  dueDate        DateTime?
+  createdAt      DateTime  @default(now())
+  lastReminderAt DateTime?
+  nextReminderAt DateTime?
+  deleted        Boolean   @default(false) // soft-delete/archive flag
+  updatedAt      DateTime  @updatedAt
+  version        Int       @default(0)
+
+  business Business   @relation(fields: [businessId], references: [id])
+  customer Customer   @relation(fields: [customerId], references: [id])
+  payments Payment[]
+  reminders Reminder[]
+
+  @@index([businessId])
+  @@index([customerId])
+}
+
+model Payment {
+  id         String   @id
+  businessId String
+  debtId     String
+  amount     Int // kobo (S-1)
+  method     String // client label, recorded verbatim
+  reference  String // server-minted receipt number, e.g. OWM-00418
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  version    Int      @default(0)
+
+  business Business @relation(fields: [businessId], references: [id])
+  debt     Debt     @relation(fields: [debtId], references: [id])
+
+  @@index([businessId])
+  @@index([debtId])
+}
+
+model Reminder {
+  id           String    @id
+  businessId   String
+  debtId       String
+  channel      String // enum: sms|whatsapp|call|manual|printable
+  status       String // enum: scheduled|sent|failed
+  message      String?
+  scheduledFor DateTime?
+  sentAt       DateTime?
+  payLinkUrl   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  version      Int       @default(0)
+
+  business Business @relation(fields: [businessId], references: [id])
+  debt     Debt     @relation(fields: [debtId], references: [id])
+
+  @@index([businessId])
+  @@index([debtId])
+}
+
+model Notification {
+  id         String   @id
+  businessId String
+  title      String
+  body       String   @default("")
+  kind       String   @default("info") // enum: payment|overdue|reminder|insight|info
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  version    Int      @default(0)
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId])
+}
+
+model NotificationPreferences {
+  businessId String   @id // one row per business/owner
+  payments   Boolean  @default(true)
+  overdue    Boolean  @default(true)
+  delivery   Boolean  @default(true)
+  weekly     Boolean  @default(false)
+  updatedAt  DateTime @updatedAt
+  version    Int      @default(0)
+
+  business Business @relation(fields: [businessId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Payments / payout (Paystack)
+// ---------------------------------------------------------------------------
+model PayoutAccount {
+  businessId    String @id // one row per business
+  bankCode      String
+  accountNumber String // 10-digit NUBAN
+  accountName   String // resolved via Paystack
+
+  business Business @relation(fields: [businessId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Billing / plans / ledgers
+// ---------------------------------------------------------------------------
+model Plan {
+  id                String  @id // starter|market|business|enterprise
+  name              String
+  pricePerMonth     Int // kobo, 0 = free
+  tagline           String
+  features          Json // string[]
+  productId         String?
+  talkToSales       Boolean @default(false)
+  recommended       Boolean @default(false)
+  // limits (flattened; -1 = fair-use/unlimited, null bvumCeiling = unlimited)
+  sendsPerMonth     Int
+  aiCreditsPerMonth Int
+  staffSeats        Int
+  bvumCeiling       Int? // kobo
+}
+
+model Subscription {
+  businessId       String    @id // one row per business
+  planId           String // canonical
+  entitlementState String // enum: none|pending|active|gracePeriod|expired
+  activePlanId     String // canonical
+  renewalAt        DateTime?
+
+  business Business @relation(fields: [businessId], references: [id])
+}
+
+model BillingTransaction {
+  id         String   @id
+  businessId String
+  kind       String // enum: subscription|messages-bundle|ai-bundle
+  productId  String
+  label      String
+  amount     Int // kobo
+  createdAt  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId])
+}
+
+model CreditLedger {
+  businessId   String   @id // one shared AI-credit ledger per business
+  balance      Int      @default(0)
+  monthlyGrant Int      @default(0)
+  periodStart  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id])
+}
+
+model SendAllowanceLedger {
+  businessId   String   @id // one send-allowance ledger per business
+  remaining    Int      @default(0)
+  monthlyGrant Int      @default(0)
+  periodStart  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id])
+}

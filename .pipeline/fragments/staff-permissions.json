@@ -1,0 +1,80 @@
+{
+  "screenId": "staff-permissions",
+  "route": "/settings/staff/:index",
+  "sourceFile": "lib/screens/settings/staff_screens.dart",
+  "sourceClass": "StaffPermissionsScreen",
+  "sourceLines": "388-549",
+  "dataProvenance": "inline",
+  "reads": [
+    {
+      "entity": "Staff",
+      "cardinality": "single",
+      "provenance": "in-memory mock kStaff ValueNotifier (lib/screens/settings/staff_screens.dart ~30-42); selected by staffIndex route param and read at ~406-407 (kStaff.value[index]). No drift table, no repository read.",
+      "fields": [
+        {"name": "name", "type": "string", "nullable": false, "note": "StaffMember.name (~22)"},
+        {"name": "phone", "type": "string", "nullable": false, "note": "StaffMember.phone (~23); currently the de-facto identity key used to look up perms and to filter on deactivate — no explicit id field exists as-built"},
+        {"name": "role", "type": "string", "nullable": false, "note": "StaffMember.role (~24), free-text label ('Owner'/'Cashier'/...); collapses to coarse owner|staff under S-4"},
+        {"name": "isOwner", "type": "boolean", "nullable": false, "note": "StaffMember.isOwner (~25); owner rows are not navigable to this screen"}
+      ],
+      "filtersOrSort": [],
+      "pagination": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "viewStaffMember",
+      "kind": "read",
+      "entity": "Staff",
+      "provenance": "Screen open via context.push('/settings/staff/:index') from StaffScreen; resolves one StaffMember from kStaff by index.",
+      "payload": [
+        {"name": "staffId", "type": "string", "note": "as-built the list index / phone selects the member; a real backend id is expected"}
+      ],
+      "expectedResponse": {"entity": "Staff", "cardinality": "single"}
+    },
+    {
+      "name": "setStaffActive",
+      "kind": "update",
+      "entity": "Staff",
+      "provenance": "Deactivate button (~504-522): showConfirmDialog then mutates kStaff in memory, removing the member by phone (~513-516), pops, shows snackbar '<name> deactivated'. Only deactivate is wired as-built (active=false); activate is the symmetric coarse-model action.",
+      "payload": [
+        {"name": "staffId", "type": "string", "note": "as-built keyed by StaffMember.phone; backend uses a real Staff id"},
+        {"name": "active", "type": "boolean", "note": "false on deactivate; true on reactivate"}
+      ],
+      "expectedResponse": {"entity": "Staff", "cardinality": "single"}
+    }
+  ],
+  "supersededElements": [
+    {
+      "name": "granularPermissionMatrix",
+      "kind": "inlineLiteral",
+      "file": "lib/screens/settings/staff_screens.dart",
+      "lines": "398-404",
+      "supersededBy": "S-4",
+      "literal": {
+        "Record debts": true,
+        "Record payments": true,
+        "Send reminders": true,
+        "View reports": false,
+        "Manage customers": false
+      },
+      "note": "static const _defaults per-staff permission toggles, rendered as ToggleRows (~475-481) and session-persisted per member in kStaffPerms keyed by phone (~410-413). SUPERSEDED-BY-S-4: backend does NOT implement per-permission flags; these collapse to coarse role owner|staff (staff can read/write debts+customers; cannot delete debts, manage staff, or touch billing/payout/subscription). Recorded here for provenance only — do NOT synthesize permission-flag fields or endpoints."
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"],
+    "note": "Staff management is owner-only per conventions.md (staff cannot manage staff). Screen reachable only from the owner-facing Staff & roles settings surface."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false
+  },
+  "uiStatesHandled": [
+    "loaded-single",
+    "confirm-dialog-before-deactivate",
+    "success-snackbar",
+    "index-clamped-to-valid-range"
+  ],
+  "supersededNote": "granular permission map superseded by S-4"
+}

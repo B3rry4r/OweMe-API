@@ -1,0 +1,29 @@
+{
+  "screenId": "splash",
+  "reads": [
+    {
+      "entity": "Session",
+      "fields": [
+        {"name": "loggedIn", "type": "bool", "nullable": false}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none",
+      "notes": "App-launch/session-bootstrap. As-built reads a single local boolean (SessionStore.loggedIn over shared_preferences, key 'session.loggedIn', default false) to branch context.go(loggedIn ? '/dashboard' : '/welcome') after a 1400ms splash timer. The SessionStore docstring states the real implementation exchanges phone+OTP with the auth API and stores the returned token; the backend need this screen expresses is a session/token-validity check at launch (is there a valid, non-expired access/refresh token?). No entity fields are read from a data list; the only observable is auth state (authenticated vs not)."
+    }
+  ],
+  "actions": [],
+  "authContext": {
+    "requiresAuth": false,
+    "rolesObserved": [],
+    "notes": "Pre-auth routing surface: this screen DETERMINES auth state rather than requiring it. It gates entry to authenticated screens (/dashboard) vs the unauthenticated onboarding funnel (/welcome). No role is read or gated here."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "polling": false,
+    "notes": "Fixed 1400ms Timer before routing; no network call as-built (local flag only)."
+  },
+  "uiStatesHandled": ["loading"]
+}

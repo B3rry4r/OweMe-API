@@ -1,0 +1,80 @@
+{
+  "screenId": "setup",
+  "reads": [],
+  "actions": [
+    {
+      "name": "saveBusiness",
+      "kind": "create",
+      "entity": "BusinessProfile",
+      "payload": [
+        {"name": "businessName", "type": "string"},
+        {"name": "category", "type": "string"},
+        {"name": "currency", "type": "string"},
+        {"name": "reminderTone", "type": "string"}
+      ],
+      "expectedResponse": {"entity": "BusinessProfile", "cardinality": "single"},
+      "notes": "repo.saveBusiness(BusinessProfilesCompanion) at setup_screen.dart lines ~81-88. Upsert (create-or-update: getBusiness() null -> insert, else update). This onboarding screen is the first write, so effectively create. Only these 4 fields are set here; currency is composed as '<code> (<symbol>)' e.g. 'NGN (₦)'. The BusinessProfiles table (database.dart lines 81-97) also has ownerName, phone, category(default 'Provisions'), plan(default 'Free'), paystackSubaccount(nullable) — NOT set by this screen. Money fields: none on this entity. Per S-2 id will be client UUIDv7 on the real create payload (drift id is int autoincrement as-built)."
+    },
+    {
+      "name": "logIn",
+      "kind": "custom",
+      "entity": "Session",
+      "payload": [],
+      "expectedResponse": {"entity": "Session", "cardinality": "single"},
+      "notes": "session.logIn() at setup_screen.dart line 89, immediately after saveBusiness. SessionStore seam (session.dart) — as-built just flips a shared_preferences bool 'session.loggedIn' with NO DB write; comment says real impl exchanges phone+OTP for a token. This is the AUTH seam; not a backend business-data action. On success navigates context.go('/dashboard'). No credentials passed here — actual OTP exchange happens on the otp screen; setup only records the signed-in state."
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"]
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "notes": "Logo 'upload' is a pure UI mock: _logoUploaded bool toggled locally (lines 66, 320, 388), no file is ever picked or sent. No real upload contract on this screen."
+  },
+  "uiStatesHandled": ["submitting", "error", "success"],
+  "uiStatesNotes": "_finish() (lines 76-99): try -> saveBusiness + logIn -> context.go('/dashboard') (success). catch -> debugPrint + showAppSnackbar 'Something went wrong. Try again.' then return (error). No explicit spinner/loading widget; button PrimaryButton fires _finish directly. 'Never a silent dead button' — every failure surfaces a snackbar.",
+  "referenceData": [
+    {
+      "name": "_categories",
+      "role": "static reference list (business category options)",
+      "file": "lib/screens/onboarding/setup_screen.dart",
+      "lines": "12-20",
+      "shape": "List<String>",
+      "values": ["Provision store", "POS agent", "Pharmacy", "Wholesaler", "Fashion & fabrics", "Electronics", "Other"],
+      "note": "Reconciliation decides serve-vs-local. NOTE: BusinessProfiles.category drift default is 'Provisions' and business_profile_screen.dart has a DIFFERENT _categories list (Provision store/Pharmacy/Building materials/Fashion & fabric/POS agent) — the two category lists diverge across screens."
+    },
+    {
+      "name": "_currencies",
+      "role": "static reference list (currency options)",
+      "file": "lib/screens/onboarding/setup_screen.dart",
+      "lines": "29-34",
+      "shape": "List<{symbol: string, name: string, code: string}> (_CurrencyOption, defined lines 22-27)",
+      "values": [
+        {"symbol": "₦", "name": "Nigerian Naira", "code": "NGN"},
+        {"symbol": "₵", "name": "Ghanaian Cedi", "code": "GHS"},
+        {"symbol": "KSh", "name": "Kenyan Shilling", "code": "KES"},
+        {"symbol": "$", "name": "US Dollar", "code": "USD"}
+      ],
+      "note": "Persisted onto BusinessProfile.currency as the composed string '<code> (<symbol>)'."
+    },
+    {
+      "name": "_tones",
+      "role": "template seed data (reminder-tone sample messages)",
+      "file": "lib/screens/onboarding/setup_screen.dart",
+      "lines": "36-49",
+      "shape": "List<(String name, String sample)>",
+      "values": [
+        {"name": "Gentle", "sample": "Hi Mama Grace, hope you're well. Small reminder about the ₦85,000 whenever you can."},
+        {"name": "Friendly", "sample": "Hi Mama Grace, just a reminder your ₦85,000 is due Friday. Thank you!"},
+        {"name": "Firm", "sample": "Hi Mama Grace, your ₦85,000 is now due. Kindly settle today. Thank you."}
+      ],
+      "note": "Only the tone NAME (Gentle/Friendly/Firm) is persisted (BusinessProfile.reminderTone, default 'Friendly'); the sample strings are display-only demo copy referencing 'Mama Grace'/'₦85,000'. Same _tones concept appears in templates_screen.dart. Template seed for the reminder engine."
+    }
+  ],
+  "prefillLiterals": {
+    "note": "Non-persisted demo defaults in _SetupScreenState (lines 63-68): _name='Excel Provisions', _category='Provision store', _currency=_currencies.first (NGN), _tone='Friendly', _expanded=false, _logoUploaded=false. These are seeded UI defaults, not backend data."
+  }
+}

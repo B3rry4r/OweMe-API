@@ -1,0 +1,43 @@
+{
+  "tasks": [
+    {
+      "id": "UA-1",
+      "bornFrom": "S-1",
+      "screenId": "(cross-cutting money formatter)",
+      "files": [
+        "lib/theme/ or lib/core/ money formatter (formatNaira/formatMoney helper)",
+        "audit call sites across debts/debt-detail/customers/customer-detail/record-payment/receipt/dashboard/activity/subscription/usage/billing-history/compare-plans/send-reminder"
+      ],
+      "change": "Money is integer kobo end-to-end (local drift DB + wire). Update the shared money formatter to divide by 100 for display, and ensure the drift migration stores kobo. Amount INPUT fields (record-debt, record-payment, edit-debt) must multiply user-entered naira by 100 before persisting. Single formatter change + call-site audit; individual screens keep their layout.",
+      "wireVisible": true,
+      "status": "superseded",
+      "resolution": "Money converted kobo<->naira at the frontend sync/API boundary (Phase 6), keeping local drift + UI money code unchanged. No UI formatter change needed. Decided 2026-07-12."
+    },
+    {
+      "id": "UA-2",
+      "bornFrom": "S-4",
+      "screenId": "staff-permissions",
+      "files": [
+        "lib/screens/settings/staff_screens.dart (StaffPermissionsScreen ~388-549; _defaults ~398-404; kStaffPerms ~410-413)"
+      ],
+      "change": "Remove the granular per-permission toggle matrix (Record debts/Record payments/Send reminders/View reports/Manage customers) and kStaffPerms state. Backend implements coarse owner|staff only; the screen shows role + activate/deactivate, no per-permission toggles. Preserve the deactivate flow.",
+      "wireVisible": true
+    },
+    {
+      "id": "UA-3",
+      "bornFrom": "S-5",
+      "screenId": "setup, templates",
+      "files": [
+        "lib/screens/onboarding/setup_screen.dart (_tones ~36-49)",
+        "lib/screens/settings/templates_screen.dart (_tones ~13-26)"
+      ],
+      "change": "Rename the reminder-tone third value 'Firm' -> 'Final' in both _tones literals (label + any persisted value), per C-1 ruling. Canonical tones become gentle|friendly|final. Preserve the sample-message copy and card styling.",
+      "wireVisible": true
+    }
+  ],
+  "notes": [
+    "S-2 (UUIDv7) is wireVisible:false \u2014 ids are not displayed; the client mints them in the data layer during wiring. No UI-align task.",
+    "S-3 (canonical plan ids) is ALREADY aligned in frontend commit f476925 (billing.dart writes canonical ids, fail-closed to starter). No UI-align task \u2014 confirmed by handoff \u00a72.",
+    "C-1 (reminderTone third value): IF resolved to 'final', a UA-3 task will be appended to rename 'Firm'->'Final' in setup_screen.dart _tones (~36-49), templates_screen.dart _tones (~13-26), and any tone display label. Pending user ruling."
+  ]
+}

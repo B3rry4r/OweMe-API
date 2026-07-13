@@ -1,0 +1,13 @@
+{
+  "screenId": null,
+  "provenance": "declaration",
+  "declaredAs": "other",
+  "integration": null,
+  "notes": "GET /insights/dashboard — AI-generated business insights. Screen-less 501 scaffold for now (sourceScreens: []). Debits 5 AI credits on success against the shared credit-ledger. Behind the LlmProvider interface. Contract stable when it goes live.",
+  "reads": [
+    {"entity": "InsightsDashboard", "fields": [{"name": "insights", "type": "object", "nullable": false}], "cardinality": "single"}
+  ],
+  "actions": [
+    {"name": "getInsights", "kind": "custom", "entity": "InsightsDashboard", "endpoint": "GET /insights/dashboard", "auth": "user", "status": 501, "debits": 5}
+  ]
+}

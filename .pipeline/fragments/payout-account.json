@@ -1,0 +1,101 @@
+{
+  "screenId": "payout-account",
+  "screenTitle": "Payout Account (Settings/Payout)",
+  "route": "/settings/payout",
+  "uiFiles": ["lib/screens/settings/payout_account_screen.dart"],
+  "dataFiles": ["lib/data/repos/app_repository.dart", "lib/data/payments/paystack_links.dart"],
+  "paymentModel": "Paystack platform: one platform merchant, a subaccount per business created server-side from (bankCode, accountNumber, accountName) — nothing else stored.",
+  "reads": [
+    {
+      "entity": "Bank",
+      "fields": [
+        {"name": "code", "type": "string", "nullable": false, "note": "NUBAN/Paystack bank code, e.g. '044', '50191', '999992'. Tuple slot .$1 in const kBanks."},
+        {"name": "name", "type": "string", "nullable": false, "note": "Human bank name, e.g. 'Access Bank'. Tuple slot .$2 in const kBanks."}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": [],
+      "pagination": "none",
+      "endpoint": "GET /banks",
+      "mockRef": {
+        "file": "lib/screens/settings/payout_account_screen.dart",
+        "lines": "23-43",
+        "symbol": "const kBanks",
+        "evidence": "const kBanks = <(String, String)> of 19 Nigerian banks with NUBAN codes; doc comment line 22 'Mock of GET /banks until the backend proxies Paystack's list.' Real endpoint proxies Paystack's bank list."
+      }
+    }
+  ],
+  "actions": [
+    {
+      "name": "resolveAccount",
+      "kind": "custom",
+      "entity": "PayoutAccount",
+      "endpoint": "POST /payout-account/resolve",
+      "payload": [
+        {"name": "bankCode", "type": "string", "note": "selected Bank.code (kBanks tuple .$1)"},
+        {"name": "accountNumber", "type": "string", "note": "10-digit NUBAN, digits-only; UI enforces length==10 before firing (LengthLimitingTextInputFormatter(10), digitsOnly)"}
+      ],
+      "expectedResponse": {
+        "entity": "PayoutAccount",
+        "cardinality": "single",
+        "fields": [
+          {"name": "accountName", "type": "string", "note": "bank-registered account holder name (Paystack name lookup). Displayed uppercased as 'NAME — is this you?'"}
+        ]
+      },
+      "mockRef": {
+        "file": "lib/screens/settings/payout_account_screen.dart",
+        "lines": "69-92",
+        "symbol": "_maybeResolve",
+        "evidence": "Fires on (accountNumber digits==10 && bank!=null). Mock: 700ms delay then reads repo.getBusiness() and returns ownerName.toUpperCase() (fallback 'ACCOUNT HOLDER'). Comment lines 81-82: 'the wired version calls POST /payout-account/resolve (Paystack account lookup) and shows the bank's registered name.'"
+      }
+    },
+    {
+      "name": "savePayoutAccount",
+      "kind": "update",
+      "entity": "PayoutAccount",
+      "endpoint": "PUT /payout-account",
+      "payload": [
+        {"name": "bankCode", "type": "string", "note": "Bank.code"},
+        {"name": "accountNumber", "type": "string", "note": "10-digit NUBAN, digits-only"},
+        {"name": "accountName", "type": "string", "note": "the resolved name confirmed by the owner (from resolveAccount response)"}
+      ],
+      "expectedResponse": {
+        "entity": "PayoutAccount",
+        "cardinality": "single",
+        "note": "Server creates/updates the business's Paystack subaccount from these three fields; nothing else stored."
+      },
+      "mockRef": {
+        "file": "lib/screens/settings/payout_account_screen.dart",
+        "lines": "154-168",
+        "symbol": "_save",
+        "evidence": "As-built persists to shared_preferences via appPrefs.setString: 'payout.bankCode', 'payout.bankName', 'payout.accountNumber', 'payout.accountName' — a backend seam, NOT the repo/drift DB. Save enabled only when bank!=null && resolvedName!=null && !resolving (line 173). Note: bankName is a client-side convenience pref only; per conventions the wire payload is bankCode+accountNumber+accountName only."
+      }
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"],
+    "note": "Payout account is owner-only per conventions (Roles & permissions: staff cannot touch billing/payout/subscription). Enforce @Roles('owner')."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false
+  },
+  "uiStatesHandled": [
+    "idle",
+    "resolving",
+    "resolved",
+    "error"
+  ],
+  "uiStatesDetail": [
+    {"state": "idle", "evidence": "No account number / <10 digits or no bank selected: _resolvedName cleared, save button disabled (lines 71-79, 173)."},
+    {"state": "resolving", "evidence": "_resolving=true shows spinner + 'Checking account…' (lines 261-278)."},
+    {"state": "resolved", "evidence": "_resolvedName!=null shows green confirmation '$name — is this you?' (lines 279-308); enables Save."},
+    {"state": "error", "evidence": "Not rendered in as-built mock (resolve cannot fail locally), but the wired POST /payout-account/resolve must surface a failed/invalid-account state (Paystack lookup can reject). Backend contract returns error envelope; UI to handle resolve failure."}
+  ],
+  "notes": [
+    "Screen reads repo.getBusiness() only to fabricate the mock resolved name (ownerName); this is a mock stand-in for the Paystack name lookup, not a real read contract.",
+    "PaystackLinkService (lib/data/payments/paystack_links.dart) is a sibling Paystack seam for debtor pay-links (createPayLink with subaccount, webhook reconcile) — not exercised by this screen's save/resolve, but confirms the subaccount-per-business model this screen provisions.",
+    "Money (S-1 kobo) and UUIDv7 ids (S-2) do not apply to these three payload shapes — no money or entity id fields are on the wire here."
+  ]
+}

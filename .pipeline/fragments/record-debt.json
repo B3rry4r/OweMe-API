@@ -1,0 +1,95 @@
+{
+  "screenId": "record-debt",
+  "reads": [
+    {
+      "name": "watchCustomers",
+      "entity": "Customer",
+      "cardinality": "list",
+      "notes": "repo.watchCustomers() drives the customer picker/suggestions (type flow, confirm-card edit, and _knownNames for the voice parser's name matching). repo.watchCustomer(initialCustomerId) preselects a customer when arriving from a detail screen. Reads only; the write actions below are the contract surface."
+    }
+  ],
+  "actions": [
+    {
+      "name": "recordDebt",
+      "kind": "create",
+      "entity": "Debt",
+      "codeRef": "repo.recordDebt (app_repository.dart:226) via _save(fromVoice:false) at record_debt_screen.dart:291",
+      "payload": [
+        {"name": "id", "type": "string", "notes": "client-generated UUIDv7 on create per conventions (S-2, idempotent retry). As-built drift uses int autoincrement — no id sent."},
+        {"name": "customerId", "type": "string", "notes": "FK to an existing Customer. As-built int; target UUIDv7 string."},
+        {"name": "amount", "type": "integer", "notes": "Debt principal. As-built WHOLE NAIRA (parsed from _typeAmountDigits via int.tryParse; drift Debts.amount comment '// whole naira'). Target: integer KOBO on the wire per S-1 (UI x100)."},
+        {"name": "note", "type": "string?", "notes": "Optional description / what-it-was-for (from _noteCtl.text; empty -> null). Maps to Debts.note."},
+        {"name": "dueDate", "type": "datetime?", "notes": "Optional; from due-date chips (Today/Tomorrow/Next week/pick/none), set to 17:00 local. Maps to Debts.dueDate."},
+        {"name": "createdAt", "type": "datetime", "notes": "DateTime.now() as-built; server-authoritative on target."}
+      ],
+      "expectedResponse": {"entity": "Debt", "cardinality": "single"},
+      "notes": "Typed/manual save path. On success the UI pops and offers 'Remind {customer}?' -> /reminders/send/{debtId}, so the created Debt id is consumed by the caller. Reminder schedule is generated server-side on create (conventions Reminder engine)."
+    },
+    {
+      "name": "addCustomer",
+      "kind": "create",
+      "entity": "Customer",
+      "codeRef": "repo.addCustomer (app_repository.dart:202) — voice new-customer at record_debt_screen.dart:264; typed via quickAddCustomer / _customerFromContact",
+      "payload": [
+        {"name": "id", "type": "string", "notes": "client-gen UUIDv7 (S-2); as-built int autoincrement."},
+        {"name": "name", "type": "string", "notes": "For the voice path this is _heardName (the parser's heard name that matched no existing customer)."},
+        {"name": "phone", "type": "string", "notes": "Empty string on the voice quick-create path; populated when picked from device contacts."}
+      ],
+      "expectedResponse": {"entity": "Customer", "cardinality": "single"},
+      "notes": "Ancillary create fired when the debt names a customer that does not exist yet ('customerId or new customer'). Precedes the Debt create; the new Customer.id is then used as customerId. Shared with add-customer screen's Customer resource — do not invent a new endpoint."
+    },
+    {
+      "name": "voiceParse",
+      "kind": "custom",
+      "entity": "Debt",
+      "endpointHint": "POST /voice/parse (conventions AI: transcript-only, debits 1 AI credit on success; audio path scaffolded 501)",
+      "codeRef": "VoiceParser.instance.parse(transcript, knownCustomers) at record_debt_screen.dart:221; local fallback parseUtterance (voice_parser.dart). VoiceParser.override is the declared backend-AI seam. Voice SAVE persists via voiceQueue.captureToDebt at record_debt_screen.dart:284.",
+      "payload": [
+        {"name": "transcript", "type": "string", "notes": "The spoken utterance text from on-device STT (SpeechCapture / speech_to_text). This is the ONLY input to POST /voice/parse (audio not uploaded as-built). NOTE: when no speech engine exists (web/preview), a DEMO transcript literal 'Mama Grace, two bags of rice, 85k, pay Friday' at record_debt_screen.dart:182 is replayed through the same parser — a placeholder, not a real field."},
+        {"name": "knownCustomers", "type": "string[]", "notes": "Optional hint list of existing customer names (_knownNames from repo.watchCustomers) to sharpen comma-less name matching. Client-supplied context, not persisted."}
+      ],
+      "expectedResponse": {
+        "entity": "Debt",
+        "cardinality": "single",
+        "fields": [
+          {"name": "customerName", "type": "string?", "notes": "Parsed debtor name; matched against existing customers, else becomes a new Customer (_heardName). Required for a complete parse."},
+          {"name": "amount", "type": "integer", "notes": "Parsed amount. As-built whole naira (handles 85k/2 thousand/85,000/2.5m); target integer kobo per S-1. Required for a complete parse."},
+          {"name": "description", "type": "string?", "notes": "Optional what-for (e.g. 'two bags of rice'). Maps to Debt.note."},
+          {"name": "dueDate", "type": "datetime?", "notes": "Optional parsed when (weekday/relative words), set 17:00 local."}
+        ]
+      },
+      "notes": "Voice write path. Two seams involved: (1) VoiceParser.parse extracts the parsed Debt fields from the transcript -> this is the POST /voice/parse action (weighted debit 1 AI credit, debit-on-success per Metering). (2) On confirm, voiceQueue.captureToDebt (voice_note_queue.dart:16) does a LOCAL create of the Debt with pendingParse=true + a VoiceNote row (filePath 'voice/<ts>.m4a', durationSeconds), then the real parser reconciles on sync. Captured Debt fields on save: customerId, amount (heardAmount), note (heardNote), dueDate, voiceNoteId, pendingParse. Backend AI reparse is the declared server-side seam."
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": [],
+    "notes": "No role literal in the UI. Per conventions both owner and staff may read/write debts and customers, so these creates default to role 'staff' (least-restrictive that allows the write). voice/parse is gated by the AI-credit ledger (403 PLAN_REQUIRED / credit exhaustion), server is sole entitlement authority."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "voice": true,
+    "audio": {
+      "present": true,
+      "notes": "Voice capture is transcript-only on the wire (POST /voice/parse). A local VoiceNote row records a filePath 'voice/<ts>.m4a' + durationSeconds, but no audio is uploaded as-built; the audio-upload parse path is scaffolded 501 per conventions."
+    },
+    "creditsGate": {
+      "present": true,
+      "signal": "voiceCreditsAvailable (ValueNotifier<bool>, voice_parser.dart:227)",
+      "notes": "Client-side display-only gate for the voice/AI path. When false the mic is shown asleep (micOff) with 'You're out of voice credits' + 'Top up credits' -> /settings/subscription/usage, and only the type path works. Backend is the real authority: /voice/parse debits 1 shared AI credit on success; exhaustion -> upgrade/top-up prompt."
+    }
+  },
+  "uiStatesHandled": [
+    "ready (voice idle: mic + spoken-formula guidance)",
+    "recording (live transcript + guide chips Name/Amount/What-for/When light as parser sees each part)",
+    "processing (parse in flight, skeleton confirm card)",
+    "confirm (parsed fields, 'tap anything to fix', per-row edit sheets)",
+    "failed (parse could not produce name+amount; retry or type)",
+    "type (manual form: customer search/add/contacts, amount keypad, expandable note + due chips)",
+    "offline (voice needs internet -> forced type path, offlineHint)",
+    "noCredits (voice credits exhausted -> asleep mic, top-up CTA, type fallback)",
+    "success (debt saved snackbar with 'Remind {customer}?' action)"
+  ]
+}

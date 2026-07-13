@@ -1,0 +1,11 @@
+{
+  "screenId": null,
+  "provenance": "declaration",
+  "declaredAs": "sync",
+  "integration": null,
+  "notes": "Offline-first delta sync (frontend is drift-backed). GET /sync?since=<cursor> returns rows changed since the cursor across all synced entities (Customers, Debts, Payments, Reminders), tombstones for deletes, and a new cursor. All synced rows carry updatedAt (server-authoritative) + version (monotonic int). Writes across the API carry If-Match: version=N; a stale write -> 409 { error, current: {...} }; client re-applies. Conflict resolution: last-writer-wins per field-set. Local writes are truth until synced — server never silently discards an offline write. This resource owns the /sync endpoint + shared versioning/tombstone conventions the schema agent bakes into every synced table.",
+  "reads": [
+    {"entity": "SyncDelta", "fields": [{"name": "changes", "type": "object", "nullable": false}, {"name": "tombstones", "type": "object", "nullable": false}, {"name": "cursor", "type": "string", "nullable": false}], "cardinality": "single"}
+  ],
+  "actions": []
+}

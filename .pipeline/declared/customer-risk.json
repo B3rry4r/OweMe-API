@@ -1,0 +1,13 @@
+{
+  "screenId": null,
+  "provenance": "declaration",
+  "declaredAs": "other",
+  "integration": null,
+  "notes": "GET /customers/:id/risk — AI risk score for a customer. Screen-less 501 scaffold for now (sourceScreens: []). Debits 5 AI credits on success against the shared credit-ledger. Behind the LlmProvider interface. Contract stable when it goes live.",
+  "reads": [
+    {"entity": "CustomerRisk", "fields": [{"name": "customerId", "type": "string", "nullable": false}, {"name": "score", "type": "number", "nullable": true}, {"name": "band", "type": "string", "nullable": true}], "cardinality": "single"}
+  ],
+  "actions": [
+    {"name": "getRisk", "kind": "custom", "entity": "CustomerRisk", "endpoint": "GET /customers/:id/risk", "auth": "user", "status": 501, "debits": 5}
+  ]
+}

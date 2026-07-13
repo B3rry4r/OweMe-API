@@ -1,0 +1,60 @@
+{
+  "screenId": "debts",
+  "reads": [
+    {
+      "entity": "Debt",
+      "source": "repo.watchAllDebts() -> List<DebtView> (Debts innerJoin Customers, leftOuterJoin Payments, groupBy debt id, SUM(payments.amount) as paidAmount, ordered by createdAt desc; includes soft-deleted rows so the Archived tab can render them)",
+      "fields": [
+        {"name": "id", "type": "int (as-built autoincrement; S-2 -> UUIDv7 string target)", "nullable": false, "note": "used for row nav to /debts/:id"},
+        {"name": "customerId", "type": "int (FK -> Customers.id; S-2 -> UUIDv7 string target)", "nullable": false},
+        {"name": "amount", "type": "int — whole naira as-built (S-1 -> integer kobo target)", "nullable": false},
+        {"name": "note", "type": "String", "nullable": true, "note": "rendered as debt subtitle, falls back to literal 'Debt'; also searched"},
+        {"name": "dueDate", "type": "DateTime", "nullable": true, "note": "drives overdue derivation, 'soonest due' sort, and due/overdue line label"},
+        {"name": "createdAt", "type": "DateTime", "nullable": false, "note": "list order (newest first) + 'recently added' sort"},
+        {"name": "lastReminderAt", "type": "DateTime", "nullable": true, "note": "feeds status derivation + 'Reminder sent <rel>' line"},
+        {"name": "nextReminderAt", "type": "DateTime", "nullable": true, "note": "feeds status derivation + 'Reminder <due>' line"},
+        {"name": "deleted", "type": "bool", "nullable": false, "note": "soft-delete flag; true rows are the Archived tab, hidden from live tabs and search"},
+        {"name": "syncState", "type": "enum SyncState {pending, synced}", "nullable": false, "note": "offline-first sync marker, not rendered"},
+        {"name": "paidAmount", "type": "int (derived: SUM(Payments.amount) for the debt; whole naira as-built / kobo target)", "nullable": false, "note": "not a Debt column — aggregated via join in DebtView"},
+        {"name": "remaining", "type": "int (computed: (amount - paidAmount).clamp(0, amount))", "nullable": false, "note": "the dominant amount shown on each card; drives 'most owed' sort and summary total"},
+        {"name": "status", "type": "enum DebtStatus {paid, partial, outstanding, overdue, reminder, scheduled} (DERIVED, never stored — deriveDebtStatus over amount/paidAmount/dueDate/lastReminderAt/nextReminderAt/now)", "nullable": false, "note": "drives StatusChip, overdue red edge, tab membership, and the per-card status line"}
+      ],
+      "relatedEntity": {
+        "entity": "Customer",
+        "note": "joined per debt via DebtView.customer; this screen reads only these fields",
+        "fields": [
+          {"name": "id", "type": "int (S-2 -> UUIDv7 target)", "nullable": false},
+          {"name": "name", "type": "String", "nullable": false, "note": "card title; searched"}
+        ]
+      },
+      "cardinality": "list",
+      "filtersOrSort": [
+        "CLIENT-SIDE tabs (enum _Tab): active = !deleted && remaining>0 && status!=overdue; overdue = !deleted && status==overdue; paid = !deleted && status==paid; archived = deleted==true. Tabs imply debt states active/outstanding, overdue, paid(settled), and archived(soft-deleted). Note: 'partial'/'reminder'/'scheduled' derived statuses fall under the Active tab.",
+        "CLIENT-SIDE sort (enum _Sort): mostOwed = remaining desc; soonestDue = dueDate asc (nulls -> year 2100 last); recentlyAdded = createdAt desc.",
+        "CLIENT-SIDE search: case-insensitive substring over customer.name OR debt.note; while searching, tabs are bypassed and only non-deleted debts are matched.",
+        "Summary line aggregates SUM(remaining) across the shown list."
+      ],
+      "pagination": "none"
+    }
+  ],
+  "actions": [],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner", "staff"],
+    "note": "Read-only screen. Per conventions both owner and staff may read debts (staff has read/write on debts). No mutations on this screen."
+  },
+  "special": {
+    "realtime": true,
+    "realtimeNote": "drift Stream via StreamBuilder (watchAllDebts) — live local reactivity, backend equivalent is delta-pull sync, not push.",
+    "uploads": false,
+    "downloads": false
+  },
+  "uiStatesHandled": [
+    "loading (StreamBuilder before first data: empty list, no explicit spinner)",
+    "empty (snapshot.hasData && all debts empty -> _DebtsEmpty CTA 'Record debt')",
+    "populated list of debt cards with StatusChip + overdue red edge",
+    "search active with 0 matches -> _NoResults for query",
+    "search active with N matches -> '<N> match(es)' count header",
+    "per-tab summary line with overdue variant styling"
+  ]
+}

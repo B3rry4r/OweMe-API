@@ -1,0 +1,25 @@
+{
+  "screenId": "activity",
+  "reads": [
+    {
+      "entity": "ActivityItem",
+      "derived": true,
+      "aggregation": "NOT a persisted table. The activity feed is a DERIVED, aggregated union computed client-side in AppRepository.watchDashboardWithActivityCap(cap) (activity screen uses cap=200 via watchActivity(); dashboard uses cap=8). It merges three drift sources into one timeline: (1) every Payment whose parent debt still exists -> kind=payment, title 'Payment received', subtitle=customer.name, amount=payment.amount; (2) every Debt -> kind=debt, title 'Debt added', subtitle=customer.name (+ ' · ' + debt.note when present), amount=debt.amount; (3) every Reminder with sentAt != null whose parent debt exists -> kind=reminder, title 'Reminder sent', subtitle=customer.name + ' · ' + channel(SMS/WhatsApp/Call), amount=null. The combined list is sorted by `at` descending and truncated to the cap. title/subtitle/channel labels are composed in the client from underlying rows; the ActivityItem model itself carries NO related-entity ids (debtId/customerId/paymentId/reminderId are used only internally to build subtitle and are dropped from the emitted shape).",
+      "fields": [
+        {"name": "kind", "type": "enum(payment|debt|reminder)", "nullable": false},
+        {"name": "title", "type": "string", "nullable": false},
+        {"name": "subtitle", "type": "string", "nullable": false},
+        {"name": "amount", "type": "integer", "nullable": true},
+        {"name": "at", "type": "datetime", "nullable": false}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": ["sort: at descending (newest first)", "cap: 200 items (client-side take)", "filter: payments/reminders whose parent debt no longer exists are excluded; only reminders with sentAt != null included"],
+      "pagination": "none"
+    }
+  ],
+  "actions": [],
+  "authContext": {"requiresAuth": true, "rolesObserved": ["owner", "staff"]},
+  "special": {"realtime": false, "uploads": false, "downloads": false},
+  "uiStatesHandled": ["loading", "empty", "data"],
+  "notes": "UI: lib/screens/misc/activity_screen.dart — StreamBuilder over repo.watchActivity() -> List<ActivityItem>, rendered as an un-truncated ActivityTimelineRow list (full version of the dashboard 'Recent activity' preview). Empty state 'Nothing yet / Debts, payments and reminders land here.' shown when snapshot.hasData && items.isEmpty. No error state handled. No mutations on this screen. As-built the amount is whole-naira int (int? amount); per Supersede S-1 wire type is integer kobo. Tenancy: feed is implicitly scoped to the business (offline-first drift store). Realtime marked false: fed by a drift Stream (local reactive query), not a server push channel; backend equivalent is delta pull per conventions sync protocol."
+}

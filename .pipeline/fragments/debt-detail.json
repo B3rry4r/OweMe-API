@@ -1,0 +1,167 @@
+{
+  "screenId": "debt-detail",
+  "reads": [
+    {
+      "entity": "Debt",
+      "note": "repo.watchDebt(debtId) -> DebtView? (single debt joined with its customer + payment progress). Fields are drift Debt columns plus derived progress (paidAmount/remaining/status) and the embedded Customer. Money is integer kobo (S-1); ids are client UUIDv7 strings on the wire (S-2) though the drift as-built uses int autoincrement.",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false},
+        {"name": "customerId", "type": "string", "nullable": false},
+        {"name": "amount", "type": "integer", "nullable": false},
+        {"name": "note", "type": "string", "nullable": true},
+        {"name": "dueDate", "type": "datetime", "nullable": true},
+        {"name": "createdAt", "type": "datetime", "nullable": false},
+        {"name": "deleted", "type": "boolean", "nullable": false},
+        {"name": "lastReminderAt", "type": "datetime", "nullable": true},
+        {"name": "nextReminderAt", "type": "datetime", "nullable": true},
+        {"name": "paidAmount", "type": "integer", "nullable": false},
+        {"name": "remaining", "type": "integer", "nullable": false},
+        {"name": "status", "type": "string(outstanding|partial|overdue|scheduled|reminder|paid)", "nullable": false},
+        {"name": "customer.id", "type": "string", "nullable": false},
+        {"name": "customer.name", "type": "string", "nullable": false},
+        {"name": "customer.phone", "type": "string", "nullable": false}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": ["by debtId"],
+      "pagination": "none"
+    },
+    {
+      "entity": "Payment",
+      "note": "repo.watchPayments(debtId) -> List<Payment>, newest-first (orderBy createdAt desc). Feeds the _DebtTimeline 'Payment received/Final payment' rows and the 'Settled'/reopen logic. reference is the receipt number (OWM-xxxxx).",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false},
+        {"name": "debtId", "type": "string", "nullable": false},
+        {"name": "amount", "type": "integer", "nullable": false},
+        {"name": "method", "type": "string", "nullable": false},
+        {"name": "reference", "type": "string", "nullable": false},
+        {"name": "createdAt", "type": "datetime", "nullable": false}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": ["where debtId == :debtId", "orderBy createdAt desc"],
+      "pagination": "none"
+    },
+    {
+      "entity": "Reminder",
+      "note": "repo.watchDebtReminders(debtId) -> List<Reminder> (orderBy id desc). This is the reminder-HISTORY timeline: only rows with sentAt != null are rendered as 'Reminder sent' items in _DebtTimeline. This is the recorded reminder history, distinct from the ReminderSchedule card below.",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false},
+        {"name": "debtId", "type": "string", "nullable": false},
+        {"name": "channel", "type": "string(sms|whatsapp|call)", "nullable": false},
+        {"name": "status", "type": "string(scheduled|sent|failed)", "nullable": false},
+        {"name": "scheduledFor", "type": "datetime", "nullable": true},
+        {"name": "sentAt", "type": "datetime", "nullable": true},
+        {"name": "payLinkUrl", "type": "string", "nullable": true}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": ["where debtId == :debtId", "orderBy id desc", "UI filters to sentAt != null"],
+      "pagination": "none"
+    },
+    {
+      "entity": "BusinessProfile",
+      "note": "repo.watchBusiness() -> BusinessProfile? consumed by _AutoReminderCard only to read the plan (limitsFor(plan).sendsPerMonth and starter-vs-paid copy). Only 'plan' is used on this screen.",
+      "fields": [
+        {"name": "plan", "type": "string(starter|market|business|enterprise)", "nullable": false}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    },
+    {
+      "entity": "ReminderSchedule",
+      "note": "READ derived from the backend reminder-engine schedule. As-built in _AutoReminderCard this is a HARDCODED 'steps' literal at lib/screens/debts/debt_detail_screen.dart lines 661-666: four fixed offsets off view.debt.dueDate at 09:00 — (-3 days 'On due date'-3 => '3 days before due'), (0 'On due date'), (+3 'days overdue'), (+7 'Final follow-up'). status is inferred client-side (step date isBefore(now) => 'sent', else 'pending'). Reconciliation maps this to the backend reminder-engine schedule (conventions Reminder engine: 3 days before due -> due date -> +3 -> +7, stops on payment). Only shown when debt is not paid, not archived, and dueDate != null.",
+      "sourceLiteral": {"file": "lib/screens/debts/debt_detail_screen.dart", "lines": "661-666"},
+      "fields": [
+        {"name": "offsetLabel", "type": "string(3 days before due|On due date|3 days overdue|Final follow-up)", "nullable": false},
+        {"name": "date", "type": "datetime", "nullable": false},
+        {"name": "status", "type": "string(sent|pending)", "nullable": false}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": ["derived from debt.dueDate: offsets -3/0/+3/+7 days at 09:00"],
+      "pagination": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "recordPayment",
+      "kind": "create",
+      "entity": "Payment",
+      "note": "repo.recordPayment(debtId, amount, method). Fired by the 'Record payment' flow and by the overflow 'Close debt' option (which records a payment for the full view.remaining with method 'Settled outside OweMe'). Server mints the receipt reference (OWM-xxxxx). Stops the reminder schedule when balance reaches 0. Allowed for owner and staff.",
+      "payload": [
+        {"name": "debtId", "type": "string"},
+        {"name": "amount", "type": "integer"},
+        {"name": "method", "type": "string"}
+      ],
+      "expectedResponse": {"entity": "Payment", "cardinality": "single"},
+      "roleGate": "owner|staff"
+    },
+    {
+      "name": "undoLastPayment",
+      "kind": "delete",
+      "entity": "Payment",
+      "note": "repo.undoLastPayment(debtId) — the 'Reopen debt'/'undo' flow. Deletes the debt's most-recent payment (by createdAt desc) and returns the removed Payment so the UI can report what was undone. Reopens a settled debt. Allowed for owner and staff.",
+      "payload": [
+        {"name": "debtId", "type": "string"}
+      ],
+      "expectedResponse": {"entity": "Payment", "cardinality": "single"},
+      "roleGate": "owner|staff"
+    },
+    {
+      "name": "restoreDebt",
+      "kind": "update",
+      "entity": "Debt",
+      "note": "repo.restoreDebt(debtId) — un-archives a soft-deleted debt (sets deleted=false). Shown only when debt.deleted. Allowed for owner and staff.",
+      "payload": [
+        {"name": "debtId", "type": "string"}
+      ],
+      "expectedResponse": {"entity": "Debt", "cardinality": "single"},
+      "roleGate": "owner|staff"
+    },
+    {
+      "name": "updateDebt",
+      "kind": "update",
+      "entity": "Debt",
+      "note": "repo.updateDebt(debtId, amount, note, dueDate, clearDueDate) — 'Edit details' sheet. Partial update of core fields. clearDueDate=true explicitly nulls dueDate (distinct from an absent/unchanged dueDate). Allowed for owner and staff.",
+      "payload": [
+        {"name": "debtId", "type": "string"},
+        {"name": "amount", "type": "integer"},
+        {"name": "note", "type": "string"},
+        {"name": "dueDate", "type": "datetime"},
+        {"name": "clearDueDate", "type": "boolean"}
+      ],
+      "expectedResponse": {"entity": "Debt", "cardinality": "single"},
+      "roleGate": "owner|staff"
+    },
+    {
+      "name": "deleteDebt",
+      "kind": "delete",
+      "entity": "Debt",
+      "note": "repo.deleteDebt(debtId) — soft delete (sets deleted=true), gated behind a confirm dialog. Per conventions (Roles & permissions / S-4) staff CANNOT delete debts: owner only.",
+      "payload": [
+        {"name": "debtId", "type": "string"}
+      ],
+      "expectedResponse": {"entity": "Debt", "cardinality": "single"},
+      "roleGate": "owner"
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner", "staff"],
+    "note": "All reads + recordPayment/undoLastPayment/restoreDebt/updateDebt allowed for owner and staff (staff can read/write debts). deleteDebt is owner-only per conventions §Roles and supersede S-4. Every query is tenant-scoped by businessId."
+  },
+  "special": {
+    "realtime": true,
+    "uploads": false,
+    "downloads": false,
+    "note": "Screen is built entirely on drift Streams via StreamBuilder (offline-first, watchDebt/watchPayments/watchDebtReminders/watchBusiness); reconciled by the sync layer (updatedAt/version, If-Match writes per conventions §Offline-first)."
+  },
+  "uiStatesHandled": [
+    "loading (StreamBuilder snapshot before first data)",
+    "not-found (snapshot.hasData but view == null -> 'Debt not found' EmptyState)",
+    "active/outstanding (Record payment primary + Remind/Receipt quick actions + auto-reminder schedule)",
+    "partial (three-figure panel: remaining hero / original / paid so far)",
+    "paid/settled ('Paid in full' panel, Send receipt, Reopen debt)",
+    "archived (deleted -> Restore debt CTA)",
+    "empty-payments guard (openLatestReceipt/reopen show 'no payments/no payment to undo' snackbars)",
+    "delete-confirm dialog"
+  ]
+}

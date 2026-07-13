@@ -1,0 +1,14 @@
+{
+  "screenId": null,
+  "provenance": "declaration",
+  "declaredAs": "integration",
+  "integration": {
+    "provider": "bulksmsnigeria",
+    "direction": ["outbound"],
+    "envVars": ["BULKSMS_API_TOKEN"],
+    "sandbox": false
+  },
+  "notes": "Single account backs BOTH the OtpSender interface (auth OTP delivery, gateway:'otp' so codes reach DND numbers) and the MessageSender interface (reminder SMS delivery). POST /api/v2/sms, Bearer token. Shared sender ID 'INFINITI' until CAC registration. Termii can replace it later behind the same interfaces. No inbound surface.",
+  "reads": [],
+  "actions": []
+}

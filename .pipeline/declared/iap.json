@@ -1,0 +1,16 @@
+{
+  "screenId": null,
+  "provenance": "declaration",
+  "declaredAs": "integration",
+  "integration": {
+    "provider": "app-store-and-play-billing",
+    "direction": ["outbound", "webhook-inbound"],
+    "envVars": ["APPLE_IAP_SHARED_SECRET", "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"],
+    "sandbox": true
+  },
+  "notes": "in_app_purchase on the client. Server VERIFIES receipts before crediting entitlement. Consumables: message bundles and AI-credit bundles (credit the respective ledgers). Non-consumable/subscription: plan (sets the business plan id). Backs a POST /billing/verify-receipt endpoint (platform, productId, receipt/purchaseToken). Optional inbound: App Store Server Notifications / Play Real-time Developer Notifications for subscription lifecycle. Behind a ReceiptVerifier interface, stubbed in tests. NEVER trust client-reported entitlement.",
+  "reads": [],
+  "actions": [
+    {"name": "verifyReceipt", "kind": "custom", "entity": "Entitlement", "payload": [{"name": "platform", "type": "string"}, {"name": "productId", "type": "string"}, {"name": "receipt", "type": "string"}], "expectedResponse": {"entity": "Entitlement", "cardinality": "single"}, "auth": "user", "endpoint": "POST /billing/verify-receipt"}
+  ]
+}

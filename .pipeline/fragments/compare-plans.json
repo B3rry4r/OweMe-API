@@ -1,0 +1,46 @@
+{
+  "screenId": "compare-plans",
+  "reads": [
+    {
+      "entity": "Plan",
+      "cardinality": "list",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false, "notes": "Canonical plan id — starter|market|business|enterprise (lowercase). Server is sole authority; unknown/absent fails CLOSED to starter (S-3). In this screen the catalog is INLINE as static const _tiers (subscription_screens.dart lines ~422-480) keyed by display name, NOT id; the canonical id-bearing source is billing.dart kPlans (lines ~151-195) / kPlanIds."},
+        {"name": "name", "type": "string", "nullable": false, "notes": "Display name (Starter/Market/Business/Enterprise). billing.dart Plan.name; _tiers tuple[0]. planDisplayName() maps id->name."},
+        {"name": "pricePerMonth", "type": "integer", "nullable": false, "notes": "Store price. billing.dart Plan.pricePerMonth (naira: starter 0, market 2500, business 6000, enterprise -1 sentinel = off-store 'from ₦18,000' talk-to-sales). Per Money convention (S-1) backend should express money as integer kobo on the wire. _tiers renders price as a pre-formatted string tuple[1] ('Free'/'₦2,500/mo'/'₦6,000/mo'/'from ₦18,000/mo')."},
+        {"name": "tagline", "type": "string", "nullable": false, "notes": "Who-it's-for line. billing.dart Plan.tagline; _tiers tuple[2] (who): 'Just getting started'/'Market traders & shops'/'Growing businesses'/'Distributors & chains'."},
+        {"name": "features", "type": "string[]", "nullable": false, "notes": "Human-readable feature bullet list rendered per card. billing.dart Plan.features; _tiers tuple[6] (rows), e.g. ['10 automatic reminders / month','Solo — no staff seats','10 AI credits / month','Scale up to ₦2M']."},
+        {"name": "productId", "type": "string", "nullable": true, "notes": "Store IAP auto-renewable subscription product id (oweme_market_monthly / oweme_business_monthly). billing.dart Plan.productId. Null for starter (free) and enterprise (off-store). Not rendered by this screen but part of the canonical Plan shape."},
+        {"name": "talkToSales", "type": "boolean", "nullable": false, "notes": "Enterprise = off-store B2B invoice, never an IAP product. billing.dart Plan.talkToSales; _tiers tuple[5] (sales), true only for Enterprise."},
+        {"name": "recommended", "type": "boolean", "nullable": false, "notes": "UI highlight flag — Business card is styled 'Recommended' (green chip + primary border). _tiers tuple[4] (recommended), true only for Business. Presentation-only; no billing.dart counterpart."},
+        {"name": "sendsPerMonth", "type": "integer", "nullable": false, "notes": "Metered automated-send allowance (SMS/WhatsApp) per month. billing.dart PlanLimits.sendsPerMonth / kPlanLimits (starter 10, market 50, business 150, enterprise -1 = fair-use). Surfaced in _tiers feature bullets ('N message sends / month')."},
+        {"name": "aiCreditsPerMonth", "type": "integer", "nullable": false, "notes": "AI credit allowance per month (shared weighted ledger). billing.dart PlanLimits.aiCreditsPerMonth (starter 10, market 100, business 500, enterprise -1 = fair-use). Surfaced in _tiers bullets ('N AI credits / month')."},
+        {"name": "staffSeats", "type": "integer", "nullable": false, "notes": "Included staff seats. billing.dart PlanLimits.staffSeats (starter 0, market 1, business 5, enterprise -1 = unlimited). Surfaced in _tiers bullets ('Solo — no staff seats' / 'N staff seat(s)')."},
+        {"name": "bvumCeiling", "type": "integer", "nullable": true, "notes": "Business Value Under Management ceiling in naira; null = unlimited (enterprise). billing.dart PlanLimits.bvumCeiling (starter 2000000, market 2000000, business 20000000, enterprise null). Surfaced in _tiers bullets ('Scale up to ₦2M/₦20M' / 'Unlimited scale')."}
+      ],
+      "filtersOrSort": [],
+      "pagination": "none",
+      "sourceProvenance": {
+        "canonical": "lib/data/billing/billing.dart — Plan class (~128-149), kPlans catalog (~151-195), PlanLimits class (~64-79) + kPlanLimits (~81-106), kPlanIds/canonicalPlanId/planDisplayName (~42-55), limitsFor (~108).",
+        "inlineDuplicate": "lib/screens/settings/subscription_screens.dart — ComparePlansScreen.static const _tiers, lines ~422-480. Four positional tuples (name, price, who, popularUnusedBool, recommendedBool, talkToSalesBool, features[]) destructured in _TierCard at ~579. This duplicates kPlans; treat billing.dart as authoritative. -1 sentinels (fair-use/unlimited) appear as '-1' in kPlanLimits and as prose ('Fair-use…','Unlimited…') in _tiers.",
+        "serverAuthoritative": "Per conventions.md, plan catalog + entitlements are SERVER-AUTHORITATIVE; client Plan/limits are display-only mirrors. Backend must own this catalog (a Plan reference resource) rather than trust the inline literal."
+      }
+    }
+  ],
+  "actions": [],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"],
+    "notes": "Subscription/billing surface — owner-only per conventions (staff cannot touch billing/subscription). Nested under /settings/subscription."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "currentPlanHighlight": {
+      "source": "repo.watchBusiness() -> BusinessProfile?; screen reads biz.data?.plan (defaulting to 'Market' when null) at ~494 and marks the matching tier 'Current' by case-insensitive name match (~580). Also gates the 'Upgrade to Business' CTA off onBusiness = plan=='business' (~495,519). This is derived UI state, not a separate read entity; backend supplies the business's current plan via the Business resource."
+    }
+  },
+  "uiStatesHandled": ["content"],
+  "uiStatesNotes": "Catalog is a static const literal, so it always renders (no loading/empty/error branches). The only stream is repo.watchBusiness for the current-plan highlight, which falls back to 'Market' on null (no explicit loading/error UI)."
+}

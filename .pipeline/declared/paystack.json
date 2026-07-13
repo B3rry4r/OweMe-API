@@ -1,0 +1,16 @@
+{
+  "screenId": null,
+  "provenance": "declaration",
+  "declaredAs": "integration",
+  "integration": {
+    "provider": "paystack",
+    "direction": ["outbound", "webhook-inbound"],
+    "envVars": ["PAYSTACK_SECRET_KEY", "PAYSTACK_WEBHOOK_SECRET"],
+    "sandbox": true
+  },
+  "notes": "Platform merchant model: one platform account, a subaccount per business. Outbound: list banks (backs GET /banks), resolve account name (backs POST /payout-account/resolve), create/update subaccount (backs PUT /payout-account, stores bankCode+accountNumber+accountName only), initialize transaction for a debt pay-link (backs POST /debts/:id/pay-link). Behind a PaystackGateway interface, stubbed in tests.",
+  "reads": [],
+  "actions": [
+    {"name": "webhookCharge", "kind": "custom", "entity": "Payment", "payload": [{"name": "event", "type": "string"}, {"name": "data.reference", "type": "string"}, {"name": "data.amount", "type": "number"}], "expectedResponse": {"entity": "Ack", "cardinality": "single"}, "auth": "provider-signature", "endpoint": "POST /webhooks/paystack", "idempotencyKey": "data.reference"}
+  ]
+}

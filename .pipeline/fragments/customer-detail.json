@@ -1,0 +1,106 @@
+{
+  "screenId": "customer-detail",
+  "route": "/customers/:id",
+  "uiFiles": ["lib/screens/customers/customer_detail_screen.dart"],
+  "dataFiles": ["lib/data/repos/app_repository.dart", "lib/data/db/database.dart", "lib/data/models.dart"],
+  "reads": [
+    {
+      "entity": "Customer",
+      "source": "repo.watchCustomers() -> List<CustomerView>, filtered client-side to the single row where customer.id == customerId (screen picks one out of the full list stream)",
+      "fields": [
+        {"name": "id", "type": "int", "nullable": false, "note": "drift autoincrement as-built; supersede S-2 -> client-generated UUIDv7 string on target"},
+        {"name": "name", "type": "string", "nullable": false},
+        {"name": "phone", "type": "string", "nullable": false, "note": "drift default '' ; rendered via formatPhone()"},
+        {"name": "address", "type": "string", "nullable": true, "note": "shown appended to phone when present"},
+        {"name": "note", "type": "string", "nullable": true, "note": "rendered as the Notes card when non-empty"},
+        {"name": "createdAt", "type": "datetime", "nullable": false, "note": "used as 'since' fallback when customer has no debts"},
+        {"name": "updatedAt", "type": "datetime", "nullable": false},
+        {"name": "owed", "type": "int", "nullable": false, "note": "CustomerView aggregate (sum of remaining across their debts); money in whole-naira as-built, kobo on target per S-1. Drives 'Owes you' MoneyPanel and red/green avatar tone"}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": ["client-side pick by customer.id == customerId from watchCustomers() list"],
+      "pagination": "none"
+    },
+    {
+      "entity": "Debt",
+      "source": "repo.watchDebts() -> List<DebtView>, filtered client-side to d.customer.id == customerId. Screen computes openCount (remaining>0), overdueCount (remaining>0 && status==overdue), and 'since' (earliest debt.createdAt)",
+      "fields": [
+        {"name": "id", "type": "int", "nullable": false, "note": "S-2 -> UUIDv7 string on target"},
+        {"name": "customerId", "type": "int", "nullable": false, "note": "FK -> Customers.id; the client-side join key"},
+        {"name": "amount", "type": "int", "nullable": false, "note": "whole-naira as-built (kobo on target per S-1)"},
+        {"name": "note", "type": "string", "nullable": true},
+        {"name": "dueDate", "type": "datetime", "nullable": true},
+        {"name": "createdAt", "type": "datetime", "nullable": false},
+        {"name": "lastReminderAt", "type": "datetime", "nullable": true},
+        {"name": "nextReminderAt", "type": "datetime", "nullable": true},
+        {"name": "deleted", "type": "bool", "nullable": false, "note": "soft-delete flag; deleteCustomer sets this true on the customer's debts (archive)"},
+        {"name": "paidAmount", "type": "int", "nullable": false, "note": "DebtView aggregate: sum of Payment.amount for the debt"},
+        {"name": "remaining", "type": "int", "nullable": false, "note": "DebtView derived = clamp(amount - paidAmount)"},
+        {"name": "status", "type": "enum", "nullable": false, "enumValues": ["outstanding", "overdue", "paid", "dueToday"], "note": "DebtStatus derived client-side (deriveDebtStatus over amount/paidAmount/dueDate/reminder timestamps); screen reads DebtStatus.overdue"}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": ["client-side where d.customer.id == customerId"],
+      "pagination": "none"
+    },
+    {
+      "entity": "CustomerActivity",
+      "source": "repo.watchCustomerActivity(customerId) -> List<ActivityItem>. Server-analog synthesises a per-customer timeline by merging that customer's Payments (kind=payment), Debts (kind=debt) and sent Reminders (kind=reminder), sorted by 'at' desc. UI shows first 3 unless 'See all' toggled.",
+      "fields": [
+        {"name": "kind", "type": "enum", "nullable": false, "enumValues": ["payment", "debt", "reminder"], "note": "ActivityKind; drives icon/color and the '+' sign on payment amounts"},
+        {"name": "title", "type": "string", "nullable": false, "note": "e.g. 'Payment received' / 'Debt created' / 'Reminder sent'"},
+        {"name": "subtitle", "type": "string", "nullable": false, "note": "payment -> Payment.method; debt -> Debt.note or 'Debt recorded'; reminder -> channel label SMS/WhatsApp/Call"},
+        {"name": "amount", "type": "int", "nullable": true, "note": "present for payment & debt, null for reminder; whole-naira as-built / kobo per S-1"},
+        {"name": "at", "type": "datetime", "nullable": false, "note": "rendered via relativeTime(); payment=createdAt, debt=createdAt, reminder=sentAt"}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": ["sorted by at desc", "client-side take(3) preview vs full list on 'See all'"],
+      "pagination": "none"
+    },
+    {
+      "entity": "CustomerRisk",
+      "source": "_RiskChipSlot widget (customer_detail_screen.dart ~lines 260-261, 396-401) — AI STUB, renders SizedBox.shrink(), unpowered. Maps to the 501 customer-risk AI surface GET /customers/:id/risk (conventions.md AI section: 501 contract, debits 5 AI credits on success, sourceScreens: []).",
+      "fields": [],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none",
+      "stub": true,
+      "note": "STUB ONLY. No fields consumed today; header risk chip present but renders nothing. Backend surface is a 501 scaffold against the shared AI credits ledger."
+    }
+  ],
+  "actions": [
+    {
+      "name": "deleteCustomer",
+      "kind": "delete",
+      "entity": "Customer",
+      "source": "repo.deleteCustomer(customerId) invoked from _openMenu 'Delete customer' after showConfirmDialog (customer_detail_screen.dart ~lines 92-110, 340-352)",
+      "payload": [
+        {"name": "customerId", "type": "int", "note": "the customer's id (route param); S-2 -> UUIDv7 string on target"}
+      ],
+      "expectedResponse": {"entity": "Customer", "cardinality": "single", "note": "as-built returns void (Future<void>); mutation deletes the Customer row and soft-archives their Debts (deleted=true, syncState=pending) in one transaction"},
+      "sideEffects": ["cascade: marks all of the customer's Debts deleted=true (archive), not a hard delete of debts"],
+      "roleGate": "UI shows NO role gate — the Delete option is rendered unconditionally in _openMenu for any signed-in user (screen never branches on role). Per conventions.md Roles & S-4: owner has full delete; staff read/write customers but CANNOT delete (staff delete of debts/customers is denied server-side). Enforcement is server-side (@Roles('owner') + RolesGuard), NOT present in this UI."
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": [],
+    "note": "No role literals or role-conditional UI observed in customer_detail_screen.dart; all reads/actions assume an authenticated business tenant (JWT businessId scoping). Delete is owner-only per conventions/S-4 but the app enforces nothing client-side."
+  },
+  "special": {
+    "realtime": true,
+    "uploads": false,
+    "downloads": false,
+    "note": "realtime: drift Streams via StreamBuilder (watchCustomers/watchDebts/watchCustomerActivity) — offline-first reactive reads, not push. AI risk surface (_RiskChipSlot) is a 501 stub."
+  },
+  "uiStatesHandled": [
+    "loading: StreamBuilder with no data yet keeps TopAppBar/back button, no body",
+    "not-found: customer id absent once snapshot.hasData -> EmptyState (userX, 'Customer not found')",
+    "owing vs settled: view.owed>0 toggles red vs green avatar tone",
+    "debt summary meta: openCount/overdueCount/'since <month year>' line on MoneyPanel",
+    "empty activity: watchCustomerActivity empty -> timeline renders SizedBox.shrink()",
+    "activity preview vs full: take(3) with 'See all' / 'Show less' toggle (_showAllActivity)",
+    "notes hidden when customer.note null/empty",
+    "delete confirmation: showConfirmDialog with outstanding-balance warning before repo.deleteCustomer, then pop + snackbar",
+    "risk chip stub: _RiskChipSlot renders nothing (unpowered AI seam)"
+  ]
+}

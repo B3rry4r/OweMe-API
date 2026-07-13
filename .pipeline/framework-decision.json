@@ -1,0 +1,13 @@
+{
+  "framework": "nestjs",
+  "decidedBy": "default",
+  "confidence": "low",
+  "evidence": [
+    {"kind": "constraint", "detail": "User confirmed in-session: no sibling backend services exist for this product family (rung 2 skipped).", "source": "session"},
+    {"kind": "constraint", "detail": "No explicit framework directive given; user asked to run the resolution waterfall and confirm the recommendation (rung 1 skipped).", "source": "session"},
+    {"kind": "manifest", "detail": "Frontend is Flutter (pubspec.yaml: flutter sdk, drift, dio, go_router). No language adjacency to a backend exists; rung-4 frontend-adjacency default for a Flutter frontend is NestJS (strong typing + per-module isolation best fits the one-agent-one-resource fence).", "source": "/workspace/projects/OweMe-Mobile/pubspec.yaml"}
+  ],
+  "orm": "prisma",
+  "confirmedByUser": true,
+  "frozenAt": "2026-07-11"
+}

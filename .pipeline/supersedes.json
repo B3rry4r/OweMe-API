@@ -1,0 +1,49 @@
+{
+  "entries": [
+    {
+      "id": "S-1",
+      "asBuilt": "Money fields are whole-naira values across screens, mocks, and drift columns.",
+      "targetState": "Integer kobo (minor units) in the database and on the wire (Paystack-native). UI divides by 100 for display.",
+      "reason": "Float/whole-naira money is unsafe and mismatches Paystack + app-store billing reconciliation, which are minor-unit native.",
+      "approvedBy": "user",
+      "approvedAt": "2026-07-11",
+      "wireVisible": true
+    },
+    {
+      "id": "S-2",
+      "asBuilt": "Drift uses int autoincrement primary keys.",
+      "targetState": "Client-generated UUIDv7 primary keys everywhere. Retrying a create with the same id is an idempotent no-op, not a duplicate.",
+      "reason": "Offline-first client must mint ids locally before sync; autoincrement cannot be reconciled across offline devices, and idempotent retries need a stable client id.",
+      "approvedBy": "user",
+      "approvedAt": "2026-07-11",
+      "wireVisible": false
+    },
+    {
+      "id": "S-3",
+      "asBuilt": "Free-text / display-name plan literals were used in billing code (already fixed frontend-side in commit f476925, which now writes canonical ids).",
+      "targetState": "Canonical lowercase plan ids: starter | market | business | enterprise. Unknown values fail CLOSED to starter. Server is the sole entitlement authority.",
+      "reason": "Free-text plan strings are ambiguous and unsafe as an entitlement key; canonical ids are the authoritative entitlement literal.",
+      "approvedBy": "user",
+      "approvedAt": "2026-07-11",
+      "wireVisible": false
+    },
+    {
+      "id": "S-4",
+      "asBuilt": "Staff screens render a granular per-staff permission matrix (record debts / record payments / send reminders / view reports / manage customers), held in-memory (kStaff/kStaffPerms), with no drift table.",
+      "targetState": "Coarse two-role model only: role = owner | staff. Staff can read/write debts and customers but cannot delete debts, manage staff, or touch billing/payout/subscription. No granular per-permission flags in the backend.",
+      "reason": "Owner decided the coarse model in handoff §5 (recorded decision > screen evidence). The granular matrix is not-yet-backed UI; the backend implements owner|staff.",
+      "approvedBy": "user",
+      "approvedAt": "2026-07-11",
+      "wireVisible": true
+    },
+    {
+      "id": "S-5",
+      "asBuilt": "Reminder-tone third value is 'Firm' in setup_screen.dart _tones (~36-49), templates_screen.dart _tones (~13-26), and drift BusinessProfiles.reminderTone.",
+      "targetState": "Canonical reminder tones: gentle | friendly | final. The third tone is 'final' (not 'firm').",
+      "reason": "Product-truth T-27 (OweMe.pdf) names the third tone 'Final'; doc outranks as-built screen evidence. Resolved conflict C-1 by user ruling 2026-07-11.",
+      "approvedBy": "user",
+      "approvedAt": "2026-07-11",
+      "wireVisible": true
+    }
+  ]
+}

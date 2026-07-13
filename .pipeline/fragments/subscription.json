@@ -1,0 +1,111 @@
+{
+  "screenId": "subscription",
+  "_scope": "ONLY class SubscriptionScreen + helper _BvumCard in lib/screens/settings/subscription_screens.dart. ComparePlansScreen/UsageScreen/BillingHistoryScreen/UpgradeScreen in the same file are owned by other agents and excluded here. No code changed; read-only extraction.",
+  "reads": [
+    {
+      "entity": "Business",
+      "_source": "repo.watchBusiness() -> Stream<BusinessProfile?> (lib/data/repos/app_repository.dart:23). Supplies the plan shown BEFORE a store entitlement goes active; once entitlement==active the billing.activePlanId wins (subscription_screens.dart:78-86).",
+      "fields": [
+        {"name": "plan", "type": "string", "nullable": true, "_note": "raw plan literal; passed through canonicalPlanId() -> one of starter|market|business|enterprise, unknown/absent fails CLOSED to starter (billing.dart:44-48, S-3). Server is sole entitlement authority per conventions; this profile field is display-only mirror."}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    },
+    {
+      "entity": "Entitlement",
+      "_source": "billing.entitlement (ValueNotifier<EntitlementState>) + billing.activePlanId (ValueNotifier<String>) from BillingService (lib/data/billing/billing_service.dart:49-54). Server-authoritative per conventions (Entitlements: server is the SOLE authority); as-built the client reflects it and _verifyWithBackend is a stub. Maps to the backend entitlement the store receipt verification returns.",
+      "fields": [
+        {"name": "state", "type": "enum", "nullable": false, "_enumValues": ["none", "pending", "active", "gracePeriod", "expired"], "_note": "EntitlementState (billing.dart:37). Drives _EntitlementBanner for pending/gracePeriod/expired."},
+        {"name": "activePlanId", "type": "string", "nullable": false, "_note": "canonical plan id; 'starter' when no paid entitlement. Used only when state==active (subscription_screens.dart:79-81)."},
+        {"name": "planId", "type": "string", "nullable": false, "_note": "resolved canonical plan actually rendered = canonicalPlanId(active ? activePlanId : business.plan). starter|market|business|enterprise."},
+        {"name": "renewal", "type": "string", "nullable": true, "_note": "AS-BUILT MOCK: hardcoded 'per month · renews 1 Aug' / 'no renewal' for free plans (subscription_screens.dart:121-129). Backend owns real renewal date/status from the subscription."}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": [],
+      "pagination": "none"
+    },
+    {
+      "entity": "Plan",
+      "_source": "kPlans const catalog in lib/data/billing/billing.dart:151-195 (via kPlans.firstWhere on resolved planId, fail-closed to kPlans.first=Starter). Plan catalog; static in app today, candidate to be served by backend plan/pricing config.",
+      "fields": [
+        {"name": "id", "type": "string", "nullable": false, "_note": "canonical: starter|market|business|enterprise"},
+        {"name": "name", "type": "string", "nullable": false},
+        {"name": "pricePerMonth", "type": "integer", "nullable": false, "_note": "as-built whole-naira (0=free, -1=off-store/enterprise). Per S-1 money is integer kobo on the wire — schema agent normalizes."},
+        {"name": "tagline", "type": "string", "nullable": false},
+        {"name": "features", "type": "array<string>", "nullable": false},
+        {"name": "productId", "type": "string", "nullable": true, "_note": "store IAP product id; null for starter (free) and enterprise (off-store)."},
+        {"name": "talkToSales", "type": "boolean", "nullable": false}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": [],
+      "pagination": "none"
+    },
+    {
+      "entity": "Bvum",
+      "_source": "_BvumCard (subscription_screens.dart:339-415) computes BVUM LIVE, client-side, via computeBvum() (billing.dart:118-125) over repo.watchAllDebts(). MAPS TO backend bvum-engine 30-day observation computation (conventions: BVUM, 30-day window, weights outstanding 40% + credit-issued-30d 30% + recovery 15% + active-debtors 10% + complexity 5%). Output is an upgrade RECOMMENDATION only, never an automatic plan change. NOTE as-built: computed on-device; complexity/active-debtor terms approximated (debtor term uses outstanding as naira proxy, complexity term 0 pre-staff).",
+      "fields": [
+        {"name": "value", "type": "integer", "nullable": false, "_note": "computeBvum output in naira (S-1: kobo on wire)."},
+        {"name": "ceiling", "type": "integer", "nullable": true, "_note": "limitsFor(plan.id).bvumCeiling (PlanLimits.bvumCeiling, billing.dart:64-108): starter ₦2M · market ₦2M · business ₦20M · enterprise null=unlimited. null renders 'no ceiling'."},
+        {"name": "recommendedPlan", "type": "string", "nullable": true, "_note": "as-built implicit: nearCeiling (fraction>=0.8) triggers the upgrade nudge; the backend bvum-engine returns an explicit recommended plan id."}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": ["30-day observation window: debts with createdAt after now-30d count toward creditIssued30d; recovered30d = sum(paidAmount); outstanding = sum(remaining), excluding deleted debts"],
+      "pagination": "none"
+    },
+    {
+      "entity": "Debt",
+      "_source": "repo.watchAllDebts() -> Stream<List<DebtView>> (lib/data/repos/app_repository.dart:75). Read ONLY as the aggregation input to Bvum inside _BvumCard; never listed on this screen. DebtView fields used: debt.amount, remaining (getter), paidAmount, debt.createdAt, debt.deleted.",
+      "fields": [
+        {"name": "amount", "type": "integer", "nullable": false},
+        {"name": "remaining", "type": "integer", "nullable": false, "_note": "derived = clamp(amount - paidAmount)"},
+        {"name": "paidAmount", "type": "integer", "nullable": false},
+        {"name": "createdAt", "type": "datetime", "nullable": false},
+        {"name": "deleted", "type": "boolean", "nullable": false}
+      ],
+      "cardinality": "list",
+      "filtersOrSort": ["client-side aggregation only (sum of outstanding/credit30/recovered30); excludes deleted"],
+      "pagination": "none"
+    },
+    {
+      "entity": "UsageSummary",
+      "_source": "_usageSummary(planId) via _usedOf() (subscription_screens.dart:661-669). AS-BUILT MOCK: usage values read from shared_preferences keys 'usage.sends'/'usage.credits' with hardcoded fallback (cap*0.3, or 62 for fair-use) — NOT a real ledger. MAPS TO the backend allowance ledger (SMS/WhatsApp delivery sends) and AI credit ledger (conventions: Metering). Caps come from limitsFor(planId).",
+      "fields": [
+        {"name": "sendsUsed", "type": "integer", "nullable": false, "_note": "mocked; real value = messaging allowance consumed this period"},
+        {"name": "sendsPerMonth", "type": "integer", "nullable": false, "_note": "PlanLimits.sendsPerMonth cap (-1=fair use -> 'Fair use')"},
+        {"name": "aiCreditsUsed", "type": "integer", "nullable": false, "_note": "mocked; real value = AI credits ledger consumed this period"},
+        {"name": "aiCreditsPerMonth", "type": "integer", "nullable": false, "_note": "PlanLimits.aiCreditsPerMonth cap"}
+      ],
+      "cardinality": "single",
+      "filtersOrSort": ["scoped to current billing period / current plan caps"],
+      "pagination": "none"
+    }
+  ],
+  "actions": [],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"],
+    "_note": "Billing/subscription is owner-only per conventions (staff cannot touch billing/subscription). Navigation-only CTAs on this screen (Upgrade -> /compare, Usage, Billing history) and billing.restorePurchases (IAP restore) are not backend actions; real purchase/entitlement actions live on the sibling screens owned by other agents."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "_note": "StreamBuilders are local drift streams, not server push. Entitlement/activePlanId are ValueNotifiers reflecting server entitlement (reflected, not streamed)."
+  },
+  "uiStatesHandled": [
+    "loading (StreamBuilder before first business/debts emission)",
+    "plan-fail-closed-to-starter (unknown/absent plan)",
+    "entitlement-active (store entitlement overrides profile plan)",
+    "entitlement-pending (banner: waiting for store confirmation)",
+    "entitlement-gracePeriod (banner: payment issue)",
+    "entitlement-expired (banner: plan expired, resubscribe)",
+    "free-plan (price<=0 -> 'Free' / 'no renewal')",
+    "bvum-no-ceiling (enterprise: unlimited scale, no meter ceiling)",
+    "bvum-under-ceiling (meter vs plan scale)",
+    "bvum-near-ceiling (fraction>=0.8: gold tone + upgrade-room copy)",
+    "grown-business-nudge (hardcoded banner -> Compare plans)",
+    "usage-fair-use ('Fair use' when sendsPerMonth<0)",
+    "restore-purchases-visible (only when kBillingMode==iap)"
+  ]
+}

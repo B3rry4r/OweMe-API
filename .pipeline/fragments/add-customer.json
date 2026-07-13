@@ -1,0 +1,52 @@
+{
+  "screenId": "add-customer",
+  "reads": [],
+  "actions": [
+    {
+      "name": "addCustomer",
+      "kind": "create",
+      "entity": "Customer",
+      "repoCall": "repo.addCustomer({required String name, required String phone, String? note, String? address})",
+      "uiFile": "lib/screens/customers/add_customer_screen.dart",
+      "dataFile": "lib/data/repos/app_repository.dart:202",
+      "payload": [
+        {"name": "id", "type": "string", "required": true, "note": "NOT sent by the as-built repo call (drift uses int autoIncrement). Per conventions S-2/§IDs the client mints a UUIDv7 id on every create; id is a required string on the create payload and the create is idempotent on a re-seen id. Add on the wire."},
+        {"name": "name", "type": "string", "required": true, "note": "_name.text.trim(); UI requires non-empty (trimmed) to enable Save."},
+        {"name": "phone", "type": "string", "required": true, "note": "_phoneDigits — digits-only string, UI-validated to exactly 11 digits before Save enables. Drift column defaults to '' but the screen always sends a value."},
+        {"name": "note", "type": "string", "required": false, "note": "_notes.text.trim(); sent as null when empty (nullable). Maps to Customers.note (drift column named 'note', not 'notes')."},
+        {"name": "address", "type": "string", "required": false, "note": "_address.text.trim(); sent as null when empty (nullable)."}
+      ],
+      "notSentByClientButServerOwned": [
+        {"name": "createdAt", "type": "datetime", "note": "As-built set client-side (DateTime.now()); per conventions offline-first protocol updatedAt is server-authoritative. createdAt present on drift Customers table."},
+        {"name": "updatedAt", "type": "datetime", "note": "Server-authoritative timestamp per sync protocol; Customers already carries updatedAt as-built."},
+        {"name": "version", "type": "integer", "note": "Monotonic per-row version added by schema agent for offline sync (If-Match writes); not present as-built."},
+        {"name": "businessId", "type": "string", "note": "Tenant scope — injected from JWT claim, never sent by client."},
+        {"name": "syncState", "type": "enum(pending|synced)", "note": "Client-local sync bookkeeping only (marked pending on insert); not a wire/backend field."}
+      ],
+      "expectedResponse": {"entity": "Customer", "cardinality": "single", "note": "As-built repo.addCustomer returns the local int row id; on the wire the create returns the created Customer resource (idempotent: re-seen id returns existing, 200)."}
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner", "staff"],
+    "note": "Creating customers is core recovery, not gated by plan. Per conventions roles model, staff can read/write customers (owner also). Both owner and staff may add a customer; not owner-only."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "deviceContactImport": {
+      "isBackendCall": false,
+      "function": "pickDeviceContact (lib/data/contacts.dart, flutter_contacts)",
+      "description": "Local device-only feature: opens the OS contact book in a styled sheet and returns a PickedContact ({name, phone}). NOT a backend call — no API contract. Degrades politely on web/denied-permission/emulator.",
+      "fieldsFilled": ["name", "phone"],
+      "note": "On pick, fills _name (picked.name) and _phone (formatPhone(picked.phone)); phone digits normalised to \\D-stripped. address and note are never populated by contact import."
+    }
+  },
+  "uiStatesHandled": [
+    "validation: name must be non-empty (trimmed) and phone must be exactly 11 digits; Save button disabled until both pass (_canSave)",
+    "validation-error: inline phone error 'Enter a valid phone number' shown after the phone field is touched when non-empty digits are not 11 long (_phoneError)",
+    "success: on save the screen pops and shows a snackbar '<name> added — record their first debt?' with a 'Record' action deep-linking to /record-debt?customer=<id>",
+    "no-explicit-error-state: _save() has no try/catch — offline-first write is assumed to complete locally and instantly; no loading spinner or failure UI as-built"
+  ]
+}

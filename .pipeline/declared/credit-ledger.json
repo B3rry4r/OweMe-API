@@ -1,0 +1,14 @@
+{
+  "screenId": null,
+  "provenance": "declaration",
+  "declaredAs": "ledger",
+  "integration": null,
+  "notes": "One shared AI-credits ledger per business. Monthly grant per plan (starter 10, market 100, business 500, enterprise fair-use). IAP AI-credit bundles top it up (via receipt verification). Any AI endpoint debits on SUCCESS only, weighted: voice parse 1; insight 5; risk score 5. The Usage screen renders the AI-credits meter (screen-backed READ); the ledger mechanics/debit rules here are backend-only. Insufficient credits -> 403 PLAN_REQUIRED-style block or 402-equivalent per conventions error envelope.",
+  "reads": [
+    {"entity": "CreditLedger", "fields": [{"name": "balance", "type": "number", "nullable": false}, {"name": "monthlyGrant", "type": "number", "nullable": false}, {"name": "periodStart", "type": "date", "nullable": false}], "cardinality": "single"}
+  ],
+  "actions": [
+    {"name": "debit", "kind": "custom", "entity": "CreditLedger", "payload": [{"name": "weight", "type": "number"}, {"name": "reason", "type": "string"}], "expectedResponse": {"entity": "CreditLedger", "cardinality": "single"}},
+    {"name": "credit", "kind": "custom", "entity": "CreditLedger", "payload": [{"name": "amount", "type": "number"}, {"name": "source", "type": "string"}], "expectedResponse": {"entity": "CreditLedger", "cardinality": "single"}}
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "screenId": null,
+  "provenance": "declaration",
+  "declaredAs": "integration",
+  "integration": {
+    "provider": "llm-provider",
+    "direction": ["outbound"],
+    "envVars": ["LLM_PROVIDER_API_KEY"],
+    "sandbox": true
+  },
+  "notes": "Behind an LlmProvider interface (Anthropic/other; key unused until AI endpoints go live). Powers voice transcript parsing (POST /voice/parse, debit 1 credit), insights (GET /insights/dashboard, debit 5), and risk scoring (GET /customers/:id/risk, debit 5). AI never controls critical/irreversible workflows; balances/scheduling/receipt-numbering stay traditional software. Stubbed in tests.",
+  "reads": [],
+  "actions": []
+}

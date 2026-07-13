@@ -1,0 +1,11 @@
+{
+  "screenId": null,
+  "provenance": "declaration",
+  "declaredAs": "scheduler",
+  "integration": null,
+  "notes": "Computes BVUM (Business Value Under Management) per business over a 30-day observation window. Weights: outstanding receivables 40%, monthly credit issued 30%, recovery volume 15%, active debtors 10%, complexity 5%. Ceilings: starter/market ₦2M, business ₦20M, enterprise unlimited. Output is an upgrade RECOMMENDATION only — plan changes are always user-confirmed, never automatic; downgrades only after sustained sub-threshold BVUM. The Subscription screen renders the computed BVUM value (screen-backed READ); the computation/observation engine is backend-only.",
+  "reads": [
+    {"entity": "Bvum", "fields": [{"name": "value", "type": "number", "nullable": false}, {"name": "ceiling", "type": "number", "nullable": false}, {"name": "recommendedPlan", "type": "string", "nullable": true}, {"name": "windowDays", "type": "number", "nullable": false}], "cardinality": "single"}
+  ],
+  "actions": []
+}

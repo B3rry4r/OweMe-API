@@ -1,0 +1,31 @@
+{
+  "edges": [
+    {"from": "Staff", "to": ["Business"]},
+    {"from": "Auth", "to": ["Business", "Staff"]},
+    {"from": "Usage", "to": ["Business", "Plan"]},
+    {"from": "Customer", "to": ["Business", "Usage"]},
+    {"from": "NotificationPreferences", "to": ["Business"]},
+    {"from": "Notification", "to": ["Business"]},
+    {"from": "PayoutAccount", "to": ["Business"]},
+    {"from": "Subscription", "to": ["Business", "Plan", "Usage"]},
+    {"from": "Voice", "to": ["Usage"]},
+    {"from": "Insights", "to": ["Usage"]},
+    {"from": "Debt", "to": ["Customer", "Business"]},
+    {"from": "Bvum", "to": ["Debt"]},
+    {"from": "Payment", "to": ["Debt"]},
+    {"from": "Reminder", "to": ["Debt", "Usage"]},
+    {"from": "Dashboard", "to": ["Debt", "Payment"]},
+    {"from": "Activity", "to": ["Debt", "Payment", "Reminder"]},
+    {"from": "Sync", "to": ["Customer", "Debt", "Payment", "Reminder"]},
+    {"from": "Webhooks", "to": ["Payment", "Subscription", "Reminder"]}
+  ],
+  "waves": [
+    ["Business", "Plan"],
+    ["Staff", "Usage"],
+    ["Auth", "Customer", "Notification", "NotificationPreferences", "PayoutAccount", "Subscription", "Voice", "Insights"],
+    ["Debt"],
+    ["Bvum", "Payment", "Reminder"],
+    ["Dashboard", "Activity", "Sync", "Webhooks"]
+  ],
+  "note": "Ledgers live in the Usage module (built wave 2) so reminders (debit sends), voice/insights (debit credits), and billing (credit bundles) can import its service. Shared guards/filters/DTOs are built by the Phase 4 schema+pre-step agents in src/common before any wave."
+}

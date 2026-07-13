@@ -1,0 +1,50 @@
+{
+  "screenId": "notifications",
+  "reads": [
+    {
+      "entity": "AppNotification",
+      "fields": [
+        { "name": "id", "type": "string", "nullable": false, "note": "drift int autoIncrement as-built; UUIDv7 string per Supersede S-2" },
+        { "name": "title", "type": "string", "nullable": false, "note": "row primary label (item.title)" },
+        { "name": "body", "type": "string", "nullable": false, "note": "secondary text (item.body); drift default '' " },
+        { "name": "kind", "type": "string", "nullable": false, "note": "code field is `kind` (not `type`); drift default 'info'. UI observed values: payment | overdue | reminder | insight | (fallback info). Drives presentation-only _style icon/color map AND tap routing (payment/insight/_ -> /activity, reminder -> /reminders, overdue -> /debts)" },
+        { "name": "read", "type": "boolean", "nullable": false, "note": "unread dot when false; drift default false" },
+        { "name": "createdAt", "type": "datetime", "nullable": false, "note": "used for desc sort and client-side Today/Earlier grouping + relative time label" }
+      ],
+      "cardinality": "list",
+      "filtersOrSort": [
+        "sort: createdAt DESC (repo.watchNotifications orderBy desc)",
+        "client-side grouping into Today vs Earlier by createdAt calendar day (presentation, not a server filter)"
+      ],
+      "pagination": "none"
+    }
+  ],
+  "actions": [
+    {
+      "name": "markAllRead",
+      "kind": "custom",
+      "entity": "AppNotification",
+      "payload": [],
+      "expectedResponse": { "entity": "AppNotification", "cardinality": "list" },
+      "note": "repo.markAllNotificationsRead() writes read=true to ALL notification rows (no id payload). As-built returns void (Future); UI relies on the watchNotifications stream re-emitting. Auto-fired ~2s after the screen is viewed (initState post-frame). No per-item read/dismiss/delete action exists."
+    }
+  ],
+  "authContext": {
+    "requiresAuth": true,
+    "rolesObserved": ["owner"],
+    "note": "No explicit role gating in the screen UI (single-user owner app). Recorded owner per conventions: push/notification surface is owner-only (debtors never install the app). Feed is business-scoped."
+  },
+  "special": {
+    "realtime": false,
+    "uploads": false,
+    "downloads": false,
+    "note": "Live updates come from a local drift Stream (offline-first watch), not a backend realtime/websocket channel. Backend push is a declared owner-only surface (may ship later) per conventions.md."
+  },
+  "uiStatesHandled": [
+    "loading (StreamBuilder before first emission — renders nothing/empty ListView until hasData)",
+    "empty (_NotificationsEmpty: 'You're all caught up')",
+    "loaded-list (grouped Today / Earlier cards)",
+    "unread-indicator (blue dot per row when !read)",
+    "auto-mark-all-read on view (~2s after open, clears bell badge)"
+  ]
+}
