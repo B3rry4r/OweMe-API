@@ -6,7 +6,7 @@ owner-approved decisions. Treat everything here as recorded-decision input
 (Supersedes / declarations / product truths). The product document for
 Step 0 is `/workspace/projects/OweMe-Mobile/OweMe.pdf` — chapters 6, 7,
 and 9 (reminders/automation, features, pricing) matter most. The frontend
-is current at commit `f476925` ("Group A").
+is current at commit `94c198e` ("Model rev 2") — §4 below reflects it.
 
 A previous pipeline session (transcript in this project's .claude history)
 explored these questions but froze nothing — no .pipeline/ artifacts or
@@ -61,8 +61,9 @@ screen-backed resources:
 - **Payout account screen** (`/settings/payout`): bank list, 10-digit NUBAN
   entry, name-resolve confirmation, save. Mirrors your `GET /banks`,
   `POST /payout-account/resolve`, `PUT /payout-account` contracts.
-- **Usage screen**: two meters — message-send allowance and AI credits —
-  with bundle purchase CTAs.
+- **Usage screen**: ONE unified "OweMe credits" meter (rev 2 replaced the
+  two separate meters) with a bundle purchase CTA, capped at 2 bundles per
+  calendar month.
 - **Debt detail**: the automatic-reminder schedule card (3 days before due →
   due date → +3 → +7, stops on payment) from the PDF's recovery engine.
 - **Subscription screen**: BVUM ("business scale") computed and displayed.
@@ -70,27 +71,51 @@ screen-backed resources:
 Only `GET /insights/dashboard` and `GET /customers/:id/risk` remain
 screen-less 501 scaffolds (`sourceScreens: []`).
 
-## 4. Metering numbers (final, owner-approved — encode in conventions)
+## 4. Metering numbers — MODEL REV 2 (final, owner-approved 2026-07-12)
 
-- **Plans** (store price; we net ≈ the PDF's figures after the 15% store
-  fee): starter free · market ₦2,500 · business ₦6,000 · enterprise from
-  ₦18,000 (off-store, talk-to-sales).
-- **Monthly automated-send allowances**: starter 10, market 50,
-  business 150, enterprise fair-use. Manual deeplink sends and printable
-  statements are unmetered and free. Any future allowance increase (e.g.
-  business 150→300 once SMS costs drop post-CAC) is the OWNER'S explicit
-  decision — never automatic, do not encode a scheduled lift.
-- **AI credits**: starter 10, market 100, business 500, enterprise
-  fair-use. Credits are WEIGHTED: a voice parse debits 1, an insight or
-  risk score debits 5. One shared ledger; debit on success only.
-- **Bundles** (IAP consumables, server verifies receipts): messages
-  50/₦750 · 150/₦2,000 · 500/₦6,000 (one allowance across SMS &
-  WhatsApp); AI credits 50/₦500 · 150/₦1,200 · 400/₦2,800.
-- **BVUM ceilings**: starter ₦2M, market ₦2M, business ₦20M, enterprise
-  unlimited. Weights per the PDF: outstanding receivables 40%, monthly
-  credit issued 30%, recovery volume 15%, active debtors 10%, complexity
-  5%. 30-day observation window. Upgrade RECOMMENDATIONS only — plan
-  changes are always user-confirmed, never automatic.
+This section SUPERSEDES the earlier metering model in full: the old
+allowances (10/50/150 sends, 10/100/500 AI credits), the 4-tier plan
+ladder, the ₦2M/₦2M/₦20M/unlimited ceilings, and — critically — the
+"upgrade recommendations only" BVUM rule. If your seeded plans or guards
+still encode any of those, replace them.
+
+- **Plans** (canonical ids now FIVE:
+  `starter|market|business|wholesale|enterprise`; unknown fails closed to
+  starter): starter free · market ₦2,500 · business ₦6,000 · wholesale
+  ₦12,000 (NEW tier) · enterprise from ₦25,000 (off-store, talk-to-sales,
+  banded — below).
+- **Unified "OweMe credits"** — ONE pool replaces the separate
+  message-send allowance and AI-credit ledgers. Weighted debits, on
+  success only: automated reminder send = 5 credits · voice parse = 1 ·
+  insight/risk score = 4. Monthly grants: starter 50, market 300,
+  business 1,200, wholesale 3,000, enterprise fair-use. Manual deeplink
+  sends and printable statements remain unmetered and free.
+  `GET /usage` should return a single credits meter (used/limit) — the
+  app currently derives one from the two old meters as an interim shim
+  (`_unifiedUsed` in `subscription_screens.dart`) and will switch to the
+  server's single meter as soon as it exists.
+- **Bundles** (IAP consumables, server verifies receipts): SKUs
+  `oweme_credits_250` ₦2,000 · `oweme_credits_600` ₦4,000 ·
+  `oweme_credits_1500` ₦8,000. HARD CAP: 2 bundle purchases per business
+  per calendar month, enforced server-side (reject the third receipt);
+  the app also blocks client-side but the server is the authority.
+- **BVUM ceilings — ENFORCED INSTANTLY, no grace window**: starter
+  ₦300k · market ₦1.5M · business ₦6M · wholesale ₦20M · enterprise
+  BANDED, never unlimited: base ₦25,000/mo covers ₦40M, each additional
+  ₦20M band adds ₦12,500/mo (the same 0.0625%/mo rate as the base).
+  Weights per the PDF: outstanding receivables 40%, monthly credit
+  issued 30%, recovery volume 15%, active debtors 10%, complexity 5%;
+  30-day window. Enforcement semantics: creating a NEW debt that would
+  push BVUM above the plan's ceiling is REJECTED with
+  `403 {error: {code: "BVUM_CEILING", requiredPlan: "<id>"}}`; the
+  existing book, payments, reminders, and everything collection-related
+  keep working — growth is gated, never recovery.
+- **Pay-link commission**: OweMe takes 1% capped ₦500 per payment ON TOP
+  of Paystack's 1.5% + ₦100 capped ₦2,000 (via Paystack subaccount
+  transaction split). The pay-link response and any fee field expose ONE
+  combined figure only — 2.5% + ₦100, capped ₦2,500 — never the
+  Paystack/OweMe breakdown. The app already discloses the combined fee
+  on the payout-setup and reminder-preview screens.
 - **Reminder SMS delivery** uses the same BulkSMSNigeria account and the
   same `MessageSender` isolation as OTP (works pre-CAC under the shared
   sender ID). The 501 delivery worker can become real whenever the owner
