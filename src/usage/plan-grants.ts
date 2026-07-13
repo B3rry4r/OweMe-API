@@ -8,12 +8,11 @@ import { PrismaService } from '../prisma/prisma.service';
  */
 export interface PlanGrants {
   planId: PlanId;
-  sendsPerMonth: number; // -1 fair-use
-  aiCreditsPerMonth: number; // -1 fair-use
+  creditsPerMonth: number; // unified OweMe credits, -1 fair-use
 }
 
 /** Fail-closed default (starter) if the Plan catalog is unseeded/unknown. */
-const STARTER_FALLBACK: PlanGrants = { planId: 'starter', sendsPerMonth: 10, aiCreditsPerMonth: 10 };
+const STARTER_FALLBACK: PlanGrants = { planId: 'starter', creditsPerMonth: 50 };
 
 /** Resolve the current monthly grants for a business from its plan (server-authoritative). */
 export async function resolvePlanGrants(
@@ -34,8 +33,7 @@ export async function resolvePlanGrants(
 
   return {
     planId: plan.id as PlanId,
-    sendsPerMonth: plan.sendsPerMonth,
-    aiCreditsPerMonth: plan.aiCreditsPerMonth,
+    creditsPerMonth: plan.creditsPerMonth,
   };
 }
 

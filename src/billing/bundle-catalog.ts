@@ -2,16 +2,15 @@ import { BillingKind } from '../shared';
 import { nairaToKobo } from '../common';
 
 /**
- * IAP consumable-bundle catalog (conventions.md §Metering — owner-approved, final).
- * Non-plan productIds route here. Plan products (oweme_market_monthly / oweme_business_monthly)
- * are resolved dynamically from the seeded Plan table instead.
+ * IAP consumable-bundle catalog — MODEL REV 2 (FRONTEND-HANDOFF.md §4).
+ * ONE unified "OweMe credits" bundle line replaces the old message/AI bundles.
+ * Non-plan productIds route here; plan products resolve from the seeded Plan table.
  *
- * Prices are the store price; stored to integer kobo (S-1). `kind` matches BillingTransaction.
+ * HARD CAP: max 2 bundle purchases per business per calendar month (enforced in
+ * BillingService/WebhooksService, not here). Prices are the store price in kobo (S-1).
  */
 export interface BundleSpec {
-  /** Which ledger the bundle credits. */
-  ledger: 'send' | 'credit';
-  /** Units credited to the ledger (sends or AI credits). */
+  /** Unified OweMe credits granted. */
   quantity: number;
   /** Store price in kobo (recorded on the BillingTransaction). */
   amountKobo: number;
@@ -21,54 +20,30 @@ export interface BundleSpec {
   kind: BillingKind;
 }
 
-/** productId -> bundle spec. Message bundles credit the send allowance; AI bundles credit credits. */
+/** productId -> bundle spec. All bundles credit the unified OweMe-credits ledger. */
 export const BUNDLE_CATALOG: Record<string, BundleSpec> = {
-  // Message bundles (one allowance across SMS & WhatsApp): 50/₦750 · 150/₦2,000 · 500/₦6,000
-  oweme_sends_50: {
-    ledger: 'send',
-    quantity: 50,
-    amountKobo: nairaToKobo(750),
-    label: '50 message sends',
-    kind: 'messages-bundle',
-  },
-  oweme_sends_150: {
-    ledger: 'send',
-    quantity: 150,
+  oweme_credits_250: {
+    quantity: 250,
     amountKobo: nairaToKobo(2_000),
-    label: '150 message sends',
-    kind: 'messages-bundle',
+    label: '250 OweMe credits',
+    kind: 'credits-bundle',
   },
-  oweme_sends_500: {
-    ledger: 'send',
-    quantity: 500,
-    amountKobo: nairaToKobo(6_000),
-    label: '500 message sends',
-    kind: 'messages-bundle',
+  oweme_credits_600: {
+    quantity: 600,
+    amountKobo: nairaToKobo(4_000),
+    label: '600 OweMe credits',
+    kind: 'credits-bundle',
   },
-
-  // AI-credit bundles: 50/₦500 · 150/₦1,200 · 400/₦2,800
-  oweme_ai_credits_50: {
-    ledger: 'credit',
-    quantity: 50,
-    amountKobo: nairaToKobo(500),
-    label: '50 AI credits',
-    kind: 'ai-bundle',
-  },
-  oweme_ai_credits_150: {
-    ledger: 'credit',
-    quantity: 150,
-    amountKobo: nairaToKobo(1_200),
-    label: '150 AI credits',
-    kind: 'ai-bundle',
-  },
-  oweme_ai_credits_400: {
-    ledger: 'credit',
-    quantity: 400,
-    amountKobo: nairaToKobo(2_800),
-    label: '400 AI credits',
-    kind: 'ai-bundle',
+  oweme_credits_1500: {
+    quantity: 1_500,
+    amountKobo: nairaToKobo(8_000),
+    label: '1,500 OweMe credits',
+    kind: 'credits-bundle',
   },
 };
+
+/** Max consumable-bundle purchases per business per calendar month (rev 2 hard cap). */
+export const MONTHLY_BUNDLE_CAP = 2;
 
 /** Resolve a bundle spec for a productId (undefined if it is not a known bundle). */
 export function resolveBundle(productId: string): BundleSpec | undefined {

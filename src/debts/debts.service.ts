@@ -22,6 +22,8 @@ import {
   PaystackGateway,
   uuidv7,
 } from '../common';
+import { BvumService } from '../bvum/bvum.service';
+import { owemeCommissionKobo, combinedPayLinkFeeKobo } from './pay-link-fees';
 
 type CustomerStub = { id: string; name: string; phone: string };
 // (schedule offsets computed via UTC date arithmetic; see reminderSchedule)
@@ -59,6 +61,7 @@ export class DebtsService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(PAYSTACK_GATEWAY) private readonly paystack: PaystackGateway,
+    private readonly bvum: BvumService,
   ) {}
 
   /** GET /debts — server-side status/sort/q filter + cursor pagination over derived views. */
@@ -158,6 +161,11 @@ export class DebtsService {
     });
     if (!customer) throw new NotFoundAppException('Customer not found in this business');
 
+    // Rev 2: INSTANT BVUM enforcement — reject a new debt that would breach the plan's
+    // ceiling (403 BVUM_CEILING). Only NEW debts are gated; the idempotent re-POST above
+    // returns before here, and updates/payments/reminders are never blocked.
+    await this.bvum.assertDebtWithinCeiling(businessId, dto.amount, dto.customerId);
+
     const created = await this.prisma.debt.create({
       data: {
         id: dto.id,
@@ -232,15 +240,19 @@ export class DebtsService {
     const row = await this.findRow(businessId, id);
     const paid = await this.paidFor(businessId, id);
     const remaining = clampKobo(row.amount - paid);
+    const amount = remaining > 0 ? remaining : row.amount;
     const business = await this.prisma.business.findUnique({ where: { id: businessId } });
 
     const result = await this.paystack.createPaymentRequest({
-      amount: remaining > 0 ? remaining : row.amount,
+      amount,
       reference: `PAYL_${uuidv7()}`,
       subaccountCode: business?.paystackSubaccount ?? null,
+      // Rev 2: OweMe's 1% (cap ₦500) commission is taken via the subaccount split.
+      transactionCharge: owemeCommissionKobo(amount),
       metadata: { debtId: id, businessId, customerId: row.customerId },
     });
-    return { url: result.url };
+    // Disclose ONE combined fee (2.5% + ₦100, cap ₦2,500) — never the breakdown.
+    return { url: result.url, fee: combinedPayLinkFeeKobo(amount) };
   }
 
   /** GET /debts/:id/payments — the debt's payments, newest-first. */

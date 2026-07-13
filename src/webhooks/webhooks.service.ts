@@ -10,7 +10,6 @@ import {
 } from '../common';
 import { IapPlatform, PlanId } from '../shared';
 import { CreditLedgerService } from '../usage/credit-ledger.service';
-import { SendAllowanceService } from '../usage/send-allowance.service';
 
 /** Uniform 200 ack body for a processed/ignored webhook (providers only care about the 200). */
 export interface WebhookAck {
@@ -67,7 +66,6 @@ const RENEWAL_DAYS = 30;
 export class WebhooksService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly sends: SendAllowanceService,
     private readonly credits: CreditLedgerService,
     @Inject(PAYSTACK_GATEWAY) private readonly paystack: PaystackGateway,
     @Inject(RECEIPT_VERIFIER) private readonly verifier: ReceiptVerifier,
@@ -172,19 +170,13 @@ export class WebhooksService {
 
     const productId = result.productId || body.productId;
 
-    // 1) Consumable bundles credited out-of-band.
+    // 1) Unified OweMe-credits bundle credited out-of-band (rev 2).
     // (amount 0: the store price is not carried on the out-of-band notification — the
     //  BillingTransaction row exists here to key idempotency on the store transaction id.)
-    const sends = /^oweme_sends_(\d+)$/.exec(productId);
-    if (sends) {
-      await this.sends.creditSend(businessId, Number(sends[1]));
-      await this.recordTxn(result.transactionId, businessId, 'messages-bundle', productId, 0);
-      return { received: true, processed: true };
-    }
-    const ai = /^oweme_ai_credits_(\d+)$/.exec(productId);
-    if (ai) {
-      await this.credits.creditCredits(businessId, Number(ai[1]), 'iap-webhook');
-      await this.recordTxn(result.transactionId, businessId, 'ai-bundle', productId, 0);
+    const creditsBundle = /^oweme_credits_(\d+)$/.exec(productId);
+    if (creditsBundle) {
+      await this.credits.creditCredits(businessId, Number(creditsBundle[1]), 'iap-webhook');
+      await this.recordTxn(result.transactionId, businessId, 'credits-bundle', productId, 0);
       return { received: true, processed: true };
     }
 

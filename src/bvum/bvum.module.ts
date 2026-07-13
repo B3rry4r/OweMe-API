@@ -9,5 +9,6 @@ import { BvumService } from './bvum.service';
 @Module({
   controllers: [BvumController],
   providers: [BvumService],
+  exports: [BvumService], // DebtsModule injects it for instant create-time enforcement (rev 2)
 })
 export class BvumModule {}

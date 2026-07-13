@@ -175,7 +175,7 @@ describe('Integration smoke (full AppModule, every registry endpoint)', () => {
         category: 'Retail',
         currency: 'NGN (₦)',
         reminderTone: 'gentle',
-        plan: 'business', // 5 staff seats, 150 sends, 500 AI credits
+        plan: 'business', // rev 2: 5 staff seats, 1,200 credits/month, ₦6M BVUM ceiling
         paystackSubaccount: 'ACCT_smoke_0001',
       },
       update: { plan: 'business', paystackSubaccount: 'ACCT_smoke_0001' },
@@ -548,10 +548,11 @@ describe('Integration smoke (full AppModule, every registry endpoint)', () => {
     expect(restored.body.deleted).toBe(false);
   });
 
-  it('POST /debts/:id/pay-link -> 200/201 { url }', async () => {
+  it('POST /debts/:id/pay-link -> 200/201 { url, fee }', async () => {
     const res = await owner(request(http).post(`/debts/${DEBT}/pay-link`));
     expect([200, 201]).toContain(res.status);
     expect(typeof res.body.url).toBe('string');
+    expect(typeof res.body.fee).toBe('number'); // rev 2: combined kobo processing fee
   });
 
   it('GET /debts/:id/payments -> 200 Payment[]', async () => {
@@ -743,7 +744,7 @@ describe('Integration smoke (full AppModule, every registry endpoint)', () => {
   // ══════════════════════════════════════════════════════════════════════════
   // PLANS / SUBSCRIPTION / BILLING / USAGE / BVUM
   // ══════════════════════════════════════════════════════════════════════════
-  it('GET /plans -> 200 Plan[] (4 canonical)', async () => {
+  it('GET /plans -> 200 Plan[] (5 canonical)', async () => {
     const res = await staff(request(http).get('/plans'));
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
@@ -752,11 +753,19 @@ describe('Integration smoke (full AppModule, every registry endpoint)', () => {
       'enterprise',
       'market',
       'starter',
+      'wholesale',
     ]);
     res.body.forEach((p: Record<string, unknown>) => {
       expect(typeof p.pricePerMonth).toBe('number');
-      expect(typeof p.limits).toBe('object');
+      // rev 2 limits: { creditsPerMonth, staffSeats, bvumCeiling } (no sends/aiCredits);
+      // bvumCeiling is a concrete number for every plan (never null).
+      const limits = p.limits as Record<string, unknown>;
+      expect(typeof limits.creditsPerMonth).toBe('number');
+      expect(typeof limits.staffSeats).toBe('number');
+      expect(typeof limits.bvumCeiling).toBe('number');
     });
+    const enterprise = (res.body as Array<Record<string, unknown>>).find((p) => p.id === 'enterprise')!;
+    expect((enterprise.limits as Record<string, unknown>).bvumCeiling).toBe(4_000_000_000);
   });
 
   it('GET /subscription as owner -> 200 entitlement', async () => {
@@ -767,10 +776,10 @@ describe('Integration smoke (full AppModule, every registry endpoint)', () => {
     expect(typeof res.body.activePlanId).toBe('string');
   });
 
-  it('POST /billing/verify-receipt (AI bundle) as owner -> 2xx { ledger }', async () => {
+  it('POST /billing/verify-receipt (credits bundle) as owner -> 2xx { ledger }', async () => {
     const res = await owner(request(http).post('/billing/verify-receipt')).send({
       platform: 'android',
-      productId: 'oweme_ai_credits_50',
+      productId: 'oweme_credits_250',
       receipt: 'smoke-receipt-1',
     });
     expect([200, 201]).toContain(res.status);
@@ -783,19 +792,23 @@ describe('Integration smoke (full AppModule, every registry endpoint)', () => {
     expectPaginated(res.body);
   });
 
-  it('GET /usage as owner -> 200 { sendAllowance, aiCredits }', async () => {
+  it('GET /usage as owner -> 200 { credits: { used, limit, balance, monthlyGrant, periodStart } }', async () => {
     const res = await owner(request(http).get('/usage'));
     expect(res.status).toBe(200);
-    expect(typeof res.body.sendAllowance).toBe('object');
-    expect(typeof res.body.aiCredits).toBe('object');
-    expect(typeof res.body.aiCredits.balance).toBe('number');
+    expect(typeof res.body.credits).toBe('object');
+    expect(typeof res.body.credits.used).toBe('number');
+    expect(typeof res.body.credits.limit).toBe('number');
+    expect(typeof res.body.credits.balance).toBe('number');
+    expect(typeof res.body.credits.monthlyGrant).toBe('number');
+    expect(typeof res.body.credits.periodStart).toBe('string');
   });
 
   it('GET /bvum as owner -> 200 { value, ceiling, recommendedPlan, windowDays }', async () => {
     const res = await owner(request(http).get('/bvum'));
     expect(res.status).toBe(200);
     expect(typeof res.body.value).toBe('number');
-    expect(res.body.ceiling === null || typeof res.body.ceiling === 'number').toBe(true);
+    // rev 2: ceiling is a concrete number for every plan (business tier -> ₦6M), never null.
+    expect(typeof res.body.ceiling).toBe('number');
     expect(res.body.windowDays).toBe(30);
   });
 
@@ -871,7 +884,7 @@ describe('Integration smoke (full AppModule, every registry endpoint)', () => {
       .set('Content-Type', 'application/json')
       .send({
         platform: 'android',
-        productId: 'oweme_ai_credits_50',
+        productId: 'oweme_credits_250',
         receipt: 'smoke-iap-1',
         businessId: BID,
       });

@@ -100,6 +100,12 @@ export class PaystackGatewayHttp implements PaystackGateway {
     };
     if (input.metadata !== undefined) body.metadata = input.metadata;
     if (input.subaccountCode !== null) body.subaccount = input.subaccountCode;
+    // Rev 2 commission: a flat kobo charge the MAIN account takes off the split. Paystack's
+    // `transaction_charge` overrides the subaccount's percentage split for this transaction.
+    // https://paystack.com/docs/api/transaction/#initialize
+    if (input.subaccountCode !== null && input.transactionCharge !== undefined) {
+      body.transaction_charge = input.transactionCharge;
+    }
 
     const data = await this.request<{ authorization_url: string; reference: string }>(
       'POST',

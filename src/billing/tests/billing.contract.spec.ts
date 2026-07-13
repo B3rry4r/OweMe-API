@@ -17,7 +17,6 @@ import {
   VerifyReceiptResult,
 } from '../../common';
 import { CreditLedgerService } from '../../usage/credit-ledger.service';
-import { SendAllowanceService } from '../../usage/send-allowance.service';
 import { Role } from '../../shared';
 import { BillingModule } from '../billing.module';
 
@@ -41,15 +40,15 @@ describe('Billing / Subscription (contract)', () => {
   let prisma: PrismaService;
   let jwt: JwtService;
   let credits: CreditLedgerService;
-  let sends: SendAllowanceService;
 
   const JWT_SECRET = process.env.JWT_ACCESS_SECRET ?? 'test-access-secret';
 
   // Distinctive tenant ids so this suite never collides with other waves' seeded rows.
   const BIZ_SUB = '01912bbb-cccc-7ddd-8eee-billing0000sub';
   const BIZ_PLAN = '01912bbb-cccc-7ddd-8eee-billing000plan';
-  const BIZ_AI = '01912bbb-cccc-7ddd-8eee-billing00000ai';
-  const BIZ_SEND = '01912bbb-cccc-7ddd-8eee-billing00send0';
+  const BIZ_BUNDLE = '01912bbb-cccc-7ddd-8eee-billing0bundle';
+  const BIZ_VALIDATE = '01912bbb-cccc-7ddd-8eee-billing0valid0';
+  const BIZ_CAP = '01912bbb-cccc-7ddd-8eee-billing000cap0';
 
   const mintToken = (role: Role, businessId: string): string =>
     jwt.sign({ sub: `user-${role}`, businessId, role }, { secret: JWT_SECRET, expiresIn: '1h' });
@@ -90,13 +89,13 @@ describe('Billing / Subscription (contract)', () => {
     prisma = app.get(PrismaService);
     jwt = app.get(JwtService);
     credits = app.get(CreditLedgerService);
-    sends = app.get(SendAllowanceService);
     await app.init();
 
     await seedBusiness(BIZ_SUB);
     await seedBusiness(BIZ_PLAN);
-    await seedBusiness(BIZ_AI);
-    await seedBusiness(BIZ_SEND);
+    await seedBusiness(BIZ_BUNDLE);
+    await seedBusiness(BIZ_VALIDATE);
+    await seedBusiness(BIZ_CAP);
   });
 
   afterAll(async () => {
@@ -169,51 +168,88 @@ describe('Billing / Subscription (contract)', () => {
     expect(txns.length).toBe(1); // still one — no double record
   });
 
-  // --- POST /billing/verify-receipt : AI-credit bundle ----------------------
-  it('verify-receipt AI-credit bundle -> credits the AI ledger (balance rose)', async () => {
-    const before = await credits.getBalance(BIZ_AI); // lazily initializes (starter grant = 10)
+  // --- POST /billing/verify-receipt : unified OweMe-credits bundle ----------
+  it('verify-receipt credits bundle -> credits the unified ledger (balance rose)', async () => {
+    const before = await credits.getBalance(BIZ_BUNDLE); // lazily initializes (plan grant)
 
     const res = await request(app.getHttpServer())
       .post('/billing/verify-receipt')
-      .set('Authorization', `Bearer ${mintToken('owner', BIZ_AI)}`)
-      .send({ platform: 'android', productId: 'oweme_ai_credits_50', receipt: 'ai-receipt-1' });
+      .set('Authorization', `Bearer ${mintToken('owner', BIZ_BUNDLE)}`)
+      .send({ platform: 'android', productId: 'oweme_credits_600', receipt: 'credits-receipt-1' });
 
     expect(res.status).toBe(201);
     expect(res.body.ledger).toBeDefined();
-    expect(res.body.ledger.aiCredits).toBe(before + 50);
-    expect(await credits.getBalance(BIZ_AI)).toBe(before + 50);
+    expect(res.body.ledger.credits).toBe(before + 600);
+    expect(await credits.getBalance(BIZ_BUNDLE)).toBe(before + 600);
+
+    const txns = await prisma.billingTransaction.findMany({ where: { businessId: BIZ_BUNDLE } });
+    expect(txns.length).toBe(1);
+    expect(txns[0].kind).toBe('credits-bundle');
   });
 
-  it('re-verify same AI bundle tx -> idempotent (balance unchanged)', async () => {
-    const before = await credits.getBalance(BIZ_AI);
-    await request(app.getHttpServer())
-      .post('/billing/verify-receipt')
-      .set('Authorization', `Bearer ${mintToken('owner', BIZ_AI)}`)
-      .send({ platform: 'android', productId: 'oweme_ai_credits_50', receipt: 'ai-receipt-1' });
-    expect(await credits.getBalance(BIZ_AI)).toBe(before); // no double credit
-  });
-
-  // --- POST /billing/verify-receipt : message bundle ------------------------
-  it('verify-receipt message bundle -> credits the send allowance', async () => {
-    const before = await sends.getRemaining(BIZ_SEND); // lazily initializes (starter grant = 10)
-
+  it('re-verify same credits bundle tx -> idempotent (balance unchanged, same shape)', async () => {
+    const before = await credits.getBalance(BIZ_BUNDLE);
     const res = await request(app.getHttpServer())
       .post('/billing/verify-receipt')
-      .set('Authorization', `Bearer ${mintToken('owner', BIZ_SEND)}`)
-      .send({ platform: 'ios', productId: 'oweme_sends_150', receipt: 'send-receipt-1' });
+      .set('Authorization', `Bearer ${mintToken('owner', BIZ_BUNDLE)}`)
+      .send({ platform: 'android', productId: 'oweme_credits_600', receipt: 'credits-receipt-1' });
 
     expect(res.status).toBe(201);
-    expect(res.body.ledger).toBeDefined();
-    expect(res.body.ledger.sendAllowance).toBe(before + 150);
-    expect(await sends.getRemaining(BIZ_SEND)).toBe(before + 150);
+    expect(res.body.ledger.credits).toBe(before); // no double credit; unified balance echoed
+    expect(await credits.getBalance(BIZ_BUNDLE)).toBe(before);
+
+    const txns = await prisma.billingTransaction.findMany({ where: { businessId: BIZ_BUNDLE } });
+    expect(txns.length).toBe(1); // still one — no double record
+  });
+
+  // --- POST /billing/verify-receipt : monthly bundle cap (rev 2) ------------
+  it('monthly cap: 2 distinct bundle receipts credit, 3rd distinct -> 403 FORBIDDEN', async () => {
+    const start = await credits.getBalance(BIZ_CAP); // lazily initializes (plan grant)
+
+    // 1st bundle (250 credits) — allowed.
+    const first = await request(app.getHttpServer())
+      .post('/billing/verify-receipt')
+      .set('Authorization', `Bearer ${mintToken('owner', BIZ_CAP)}`)
+      .send({ platform: 'ios', productId: 'oweme_credits_250', receipt: 'cap-receipt-1' });
+    expect(first.status).toBe(201);
+    expect(first.body.ledger.credits).toBe(start + 250);
+
+    // 2nd bundle (600 credits, distinct tx) — allowed.
+    const second = await request(app.getHttpServer())
+      .post('/billing/verify-receipt')
+      .set('Authorization', `Bearer ${mintToken('owner', BIZ_CAP)}`)
+      .send({ platform: 'ios', productId: 'oweme_credits_600', receipt: 'cap-receipt-2' });
+    expect(second.status).toBe(201);
+    expect(second.body.ledger.credits).toBe(start + 250 + 600);
+
+    // 3rd NEW bundle receipt this calendar month — over the cap of 2 -> rejected.
+    const third = await request(app.getHttpServer())
+      .post('/billing/verify-receipt')
+      .set('Authorization', `Bearer ${mintToken('owner', BIZ_CAP)}`)
+      .send({ platform: 'ios', productId: 'oweme_credits_1500', receipt: 'cap-receipt-3' });
+    expect(third.status).toBe(403);
+    expect(third.body.error.code).toBe('FORBIDDEN');
+
+    // The rejected receipt did NOT credit and left only the 2 counted transactions.
+    expect(await credits.getBalance(BIZ_CAP)).toBe(start + 250 + 600);
+    const txns = await prisma.billingTransaction.findMany({ where: { businessId: BIZ_CAP } });
+    expect(txns.length).toBe(2);
+
+    // Idempotent re-verify of an already-counted receipt is EXEMPT from the cap.
+    const reverify = await request(app.getHttpServer())
+      .post('/billing/verify-receipt')
+      .set('Authorization', `Bearer ${mintToken('owner', BIZ_CAP)}`)
+      .send({ platform: 'ios', productId: 'oweme_credits_250', receipt: 'cap-receipt-1' });
+    expect(reverify.status).toBe(201);
+    expect(await credits.getBalance(BIZ_CAP)).toBe(start + 250 + 600); // no extra credit
   });
 
   // --- POST /billing/verify-receipt : validation ----------------------------
   it('verify-receipt invalid platform -> 422 VALIDATION_ERROR', async () => {
     const res = await request(app.getHttpServer())
       .post('/billing/verify-receipt')
-      .set('Authorization', `Bearer ${mintToken('owner', BIZ_SEND)}`)
-      .send({ platform: 'windows', productId: 'oweme_sends_150', receipt: 'x' });
+      .set('Authorization', `Bearer ${mintToken('owner', BIZ_VALIDATE)}`)
+      .send({ platform: 'windows', productId: 'oweme_credits_250', receipt: 'x' });
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
@@ -221,8 +257,8 @@ describe('Billing / Subscription (contract)', () => {
   it('verify-receipt as staff -> 403 FORBIDDEN (owner-only)', async () => {
     const res = await request(app.getHttpServer())
       .post('/billing/verify-receipt')
-      .set('Authorization', `Bearer ${mintToken('staff', BIZ_SEND)}`)
-      .send({ platform: 'ios', productId: 'oweme_sends_150', receipt: 'y' });
+      .set('Authorization', `Bearer ${mintToken('staff', BIZ_VALIDATE)}`)
+      .send({ platform: 'ios', productId: 'oweme_credits_250', receipt: 'y' });
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('FORBIDDEN');
   });

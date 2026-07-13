@@ -17,9 +17,9 @@ import {
   NotFoundAppException,
   ValidationException,
 } from '../common';
-import { SendAllowanceService } from '../usage/send-allowance.service';
+import { CreditLedgerService, CREDIT_WEIGHTS } from '../usage/credit-ledger.service';
 
-/** Channels that consume the automated-send allowance (mirrors SendAllowanceService). */
+/** Channels metered against the unified OweMe-credits ledger (call/manual/printable are free). */
 const METERED_CHANNELS: ReadonlySet<ReminderChannel> = new Set<ReminderChannel>(['sms', 'whatsapp']);
 
 type CustomerStub = { id: string; name: string; phone: string };
@@ -60,7 +60,7 @@ type ReminderRowWithJoins = ReminderRow & {
 export class RemindersService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly allowance: SendAllowanceService,
+    private readonly credits: CreditLedgerService,
     @Inject(MESSAGE_SENDER) private readonly sender: MessageSender,
   ) {}
 
@@ -128,7 +128,7 @@ export class RemindersService {
     } else {
       // Immediate. Metered channels debit BEFORE recording (exhaustion -> 403, no row persisted).
       if (METERED_CHANNELS.has(channel)) {
-        await this.allowance.debitSend(businessId, channel);
+        await this.credits.debitCredits(businessId, CREDIT_WEIGHTS.reminderSend, 'reminder-send');
         await this.sender.send({
           phone: (debt as unknown as { customer: CustomerStub }).customer.phone,
           message: dto.message ?? defaultMessage(),
@@ -176,7 +176,7 @@ export class RemindersService {
 
     const channel = row.channel as ReminderChannel;
     if (METERED_CHANNELS.has(channel)) {
-      await this.allowance.debitSend(businessId, channel);
+      await this.credits.debitCredits(businessId, CREDIT_WEIGHTS.reminderSend, 'reminder-send');
       await this.sender.send({
         phone: row.debt.customer.phone,
         message: row.message ?? defaultMessage(),

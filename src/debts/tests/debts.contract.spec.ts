@@ -35,6 +35,10 @@ describe('Debt (contract)', () => {
 
   const BID = '01912ddd-aaaa-7eee-8fff-debt000000001';
   const OTHER_BID = '01912ddd-aaaa-7eee-8fff-debt000000999';
+  // A FRESH business on the STARTER plan (ceiling ₦300k = 30_000_000 kobo) used solely to
+  // exercise rev-2 instant BVUM enforcement on POST /debts. Kept separate so the main
+  // tenant (on the 'business' plan, ₦6M ceiling) is never near its ceiling.
+  const STARTER_BID = '01912ddd-aaaa-7eee-8fff-debt000000055';
   const JWT_SECRET = process.env.JWT_ACCESS_SECRET ?? 'test-access-secret';
 
   const mint = (role: Role, businessId: string | null = BID): string =>
@@ -42,6 +46,7 @@ describe('Debt (contract)', () => {
 
   let ownerToken: string;
   let staffToken: string;
+  let starterOwnerToken: string;
 
   const PAY_URL = 'https://paystack.test/checkout/DEBT-STUB';
 
@@ -50,6 +55,7 @@ describe('Debt (contract)', () => {
   const C2 = '01912ddd-0000-7000-8000-0000000000c2';
   const C3 = '01912ddd-0000-7000-8000-0000000000c3';
   const C4 = '01912ddd-0000-7000-8000-0000000000c4';
+  const SC1 = '01912ddd-0000-7000-8000-0000000000c5'; // customer of STARTER_BID
 
   // debts
   const D_OVERDUE = '01912ddd-0000-7000-8000-00000000d001'; // 10000, due -5d, no pay -> overdue
@@ -114,7 +120,7 @@ describe('Debt (contract)', () => {
     jwt = app.get(JwtService);
     await app.init();
 
-    for (const b of [BID, OTHER_BID]) {
+    for (const b of [BID, OTHER_BID, STARTER_BID]) {
       await prisma.reminder.deleteMany({ where: { businessId: b } });
       await prisma.payment.deleteMany({ where: { businessId: b } });
       await prisma.debt.deleteMany({ where: { businessId: b } });
@@ -141,6 +147,26 @@ describe('Debt (contract)', () => {
         update: { paystackSubaccount: 'ACCT_stub_0001' },
       });
     }
+
+    // Fresh STARTER-plan tenant for BVUM enforcement tests (ceiling 30_000_000 kobo).
+    await prisma.business.upsert({
+      where: { id: STARTER_BID },
+      create: {
+        id: STARTER_BID,
+        businessName: 'Starter Trader',
+        ownerName: 'Owner',
+        phone: '08050000000',
+        category: 'Retail',
+        currency: 'NGN (₦)',
+        reminderTone: 'gentle',
+        plan: 'starter',
+        paystackSubaccount: 'ACCT_stub_starter',
+      },
+      update: { plan: 'starter', bvumCeilingOverride: null },
+    });
+    await prisma.customer.create({
+      data: { id: SC1, businessId: STARTER_BID, name: 'Starter Cust', phone: '08055555555' },
+    });
 
     const now = Date.now();
 
@@ -256,6 +282,7 @@ describe('Debt (contract)', () => {
 
     ownerToken = mint('owner');
     staffToken = mint('staff');
+    starterOwnerToken = mint('owner', STARTER_BID);
   });
 
   afterAll(async () => {
@@ -451,6 +478,67 @@ describe('Debt (contract)', () => {
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
+  // --- rev 2: INSTANT BVUM enforcement on POST /debts (starter ceiling 30_000_000 kobo) ---
+  //
+  // A brand-new debt of amount A on a fresh single-customer business projects to
+  // BVUM = round(0.85*A) (receivables .4 + creditIssued .3 + activeDebtors .1*avgTicket +
+  // complexity .05*avgTicket, avgTicket=A, 1 active debtor / 1 open debt; recovery 0).
+  //   A = 60_000_000 -> 51_000_000 > 30_000_000 (starter) and <= 150_000_000 (market)
+  //     -> 403 BVUM_CEILING requiredPlan 'market'.
+  //   A =  5_000_000 ->  4_250_000 <= 30_000_000 -> 201 created.
+
+  it('POST /debts that would breach the starter BVUM ceiling -> 403 BVUM_CEILING { error.requiredPlan }', async () => {
+    const overId = '01912ddd-0000-7000-8000-0000000bvum1';
+    const res = await request(app.getHttpServer())
+      .post('/debts')
+      .set('Authorization', `Bearer ${starterOwnerToken}`)
+      .send({ id: overId, customerId: SC1, amount: 60_000_000, note: 'too big for starter' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('BVUM_CEILING');
+    // requiredPlan is NESTED under `error` (upgrade prompt shape) — 51M fits 'market', not starter.
+    expect(res.body.error.requiredPlan).toBe('market');
+    expect(res.body.requiredPlan).toBeUndefined();
+
+    // Enforcement must not have persisted the rejected debt.
+    const row = await prisma.debt.findUnique({ where: { id: overId } });
+    expect(row).toBeNull();
+  });
+
+  it('POST /debts comfortably under the starter BVUM ceiling -> 201 created', async () => {
+    const underId = '01912ddd-0000-7000-8000-0000000bvum2';
+    const res = await request(app.getHttpServer())
+      .post('/debts')
+      .set('Authorization', `Bearer ${starterOwnerToken}`)
+      .send({ id: underId, customerId: SC1, amount: 5_000_000, note: 'fits starter' });
+
+    expect(res.status).toBe(201);
+    expectDebtViewShape(res.body);
+    expect(res.body.id).toBe(underId);
+    expect(res.body.businessId).toBe(STARTER_BID);
+    expect(res.body.amount).toBe(5_000_000);
+  });
+
+  it('BVUM gate never blocks the idempotent re-POST of an existing debt id (only NEW debts are gated)', async () => {
+    const existingId = '01912ddd-0000-7000-8000-0000000bvum3';
+    // Seed a small, within-ceiling debt first (201).
+    const first = await request(app.getHttpServer())
+      .post('/debts')
+      .set('Authorization', `Bearer ${starterOwnerToken}`)
+      .send({ id: existingId, customerId: SC1, amount: 1_000_000 });
+    expect(first.status).toBe(201);
+
+    // Re-POST the SAME id with a huge amount that WOULD breach the ceiling if treated as new:
+    // idempotent re-POST returns the existing row (200), never a 403.
+    const again = await request(app.getHttpServer())
+      .post('/debts')
+      .set('Authorization', `Bearer ${starterOwnerToken}`)
+      .send({ id: existingId, customerId: SC1, amount: 90_000_000 });
+    expect(again.status).toBe(200);
+    expect(again.body.id).toBe(existingId);
+    expect(again.body.amount).toBe(1_000_000); // unchanged existing row, not re-gated
+  });
+
   it('PATCH /debts/:id with correct If-Match -> 200; clearDueDate nulls dueDate', async () => {
     const before = await request(app.getHttpServer())
       .get(`/debts/${D_SCHEDULED}`)
@@ -506,13 +594,26 @@ describe('Debt (contract)', () => {
     expect(restored.body.deleted).toBe(false);
   });
 
-  it('POST /debts/:id/pay-link -> 200/201 { url }', async () => {
+  it('POST /debts/:id/pay-link -> 200/201 { url, fee } (rev 2: one combined disclosed fee)', async () => {
     const res = await request(app.getHttpServer())
       .post(`/debts/${D_PARTIAL}/pay-link`)
       .set('Authorization', `Bearer ${ownerToken}`);
     expect([200, 201]).toContain(res.status);
     expect(typeof res.body.url).toBe('string');
     expect(res.body.url).toBe(PAY_URL);
+
+    // Rev 2: response exposes ONE combined processing fee in kobo, charged on the
+    // outstanding amount = min(round(amount * 0.025) + 10000, 250000). No breakdown.
+    // D_PARTIAL: amount 20000, paid 5000 -> outstanding 15000.
+    //   fee = min(round(15000 * 0.025) + 10000, 250000) = min(375 + 10000, 250000) = 10375.
+    const outstanding = 15000;
+    const expectedFee = Math.min(Math.round(outstanding * 0.025) + 10000, 250000);
+    expect(typeof res.body.fee).toBe('number');
+    expect(res.body.fee).toBe(expectedFee);
+    expect(res.body.fee).toBe(10375);
+    // Never leak a Paystack-vs-OweMe breakdown.
+    expect(res.body.breakdown).toBeUndefined();
+    expect(res.body.owemeCommission).toBeUndefined();
   });
 
   it('GET /debts/:id/payments -> 200 Payment[] newest-first', async () => {

@@ -49,22 +49,35 @@ describe('Plans (contract)', () => {
     await app.close();
   });
 
-  it('GET /plans (authenticated owner) -> 200 + array of the 4 plans matching the Plan shape', async () => {
+  it('GET /plans (authenticated owner) -> 200 + array of the 5 rev-2 plans matching the Plan shape', async () => {
     const res = await request(app.getHttpServer())
       .get('/plans')
       .set('Authorization', `Bearer ${ownerToken}`);
 
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body).toHaveLength(4);
+    // Rev 2: FIVE canonical tiers.
+    expect(res.body).toHaveLength(5);
 
     const ids = res.body.map((p: { id: string }) => p.id).sort();
-    expect(ids).toEqual(['business', 'enterprise', 'market', 'starter']);
+    expect(ids).toEqual(['business', 'enterprise', 'market', 'starter', 'wholesale']);
+
+    // Returned ascending by price (money is integer kobo).
+    const prices = res.body.map((p: { pricePerMonth: number }) => p.pricePerMonth);
+    expect(prices).toEqual([...prices].sort((a, b) => a - b));
+    // Which, for rev-2 prices, is exactly this order:
+    expect(res.body.map((p: { id: string }) => p.id)).toEqual([
+      'starter',
+      'market',
+      'business',
+      'wholesale',
+      'enterprise',
+    ]);
 
     for (const plan of res.body) {
       // Key presence + types.
       expect(typeof plan.id).toBe('string');
-      expect(['starter', 'market', 'business', 'enterprise']).toContain(plan.id);
+      expect(['starter', 'market', 'business', 'wholesale', 'enterprise']).toContain(plan.id);
       expect(typeof plan.name).toBe('string');
       expect(typeof plan.pricePerMonth).toBe('number');
       expect(Number.isInteger(plan.pricePerMonth)).toBe(true); // int kobo
@@ -80,29 +93,57 @@ describe('Plans (contract)', () => {
       expect(typeof plan.talkToSales).toBe('boolean');
       expect(typeof plan.recommended).toBe('boolean');
 
-      // limits present with correct types + sentinels.
+      // Rev-2 limits shape: { creditsPerMonth, staffSeats, bvumCeiling }.
       expect(plan.limits).toBeDefined();
-      expect(typeof plan.limits.sendsPerMonth).toBe('number');
-      expect(typeof plan.limits.aiCreditsPerMonth).toBe('number');
+      expect(typeof plan.limits.creditsPerMonth).toBe('number');
       expect(typeof plan.limits.staffSeats).toBe('number');
-      expect(Number.isInteger(plan.limits.sendsPerMonth)).toBe(true);
-      expect(
-        plan.limits.bvumCeiling === null || typeof plan.limits.bvumCeiling === 'number',
-      ).toBe(true);
+      expect(Number.isInteger(plan.limits.creditsPerMonth)).toBe(true);
+      expect(Number.isInteger(plan.limits.staffSeats)).toBe(true);
+      // bvumCeiling is now a concrete number on the wire for EVERY tier (never null).
+      expect(typeof plan.limits.bvumCeiling).toBe('number');
+      expect(Number.isInteger(plan.limits.bvumCeiling)).toBe(true);
+
+      // Old rev-1 fields are GONE.
+      expect(plan.limits.sendsPerMonth).toBeUndefined();
+      expect(plan.limits.aiCreditsPerMonth).toBeUndefined();
     }
 
-    // Sentinel correctness on the fair-use/unlimited enterprise tier.
-    const enterprise = res.body.find((p: { id: string }) => p.id === 'enterprise');
-    expect(enterprise.talkToSales).toBe(true);
-    expect(enterprise.productId).toBeNull();
-    expect(enterprise.limits.sendsPerMonth).toBe(-1); // fair-use
-    expect(enterprise.limits.aiCreditsPerMonth).toBe(-1); // fair-use
-    expect(enterprise.limits.staffSeats).toBe(-1); // unlimited
-    expect(enterprise.limits.bvumCeiling).toBeNull(); // unlimited
+    // Exact per-plan rev-2 contract (prices are kobo).
+    const byId = Object.fromEntries(res.body.map((p: { id: string }) => [p.id, p]));
 
-    // Free tier sentinel.
-    const starter = res.body.find((p: { id: string }) => p.id === 'starter');
-    expect(starter.pricePerMonth).toBe(0);
+    expect(byId.starter).toMatchObject({
+      pricePerMonth: 0,
+      productId: null,
+      talkToSales: false,
+      limits: { creditsPerMonth: 50, staffSeats: 0, bvumCeiling: 30_000_000 },
+    });
+
+    expect(byId.market).toMatchObject({
+      pricePerMonth: 250_000,
+      productId: 'oweme_market_monthly',
+      recommended: true,
+      limits: { creditsPerMonth: 300, staffSeats: 1, bvumCeiling: 150_000_000 },
+    });
+
+    expect(byId.business).toMatchObject({
+      pricePerMonth: 600_000,
+      productId: 'oweme_business_monthly',
+      limits: { creditsPerMonth: 1_200, staffSeats: 5, bvumCeiling: 600_000_000 },
+    });
+
+    expect(byId.wholesale).toMatchObject({
+      pricePerMonth: 1_200_000,
+      productId: 'oweme_wholesale_monthly',
+      limits: { creditsPerMonth: 3_000, staffSeats: 15, bvumCeiling: 2_000_000_000 },
+    });
+
+    // Fair-use / banded enterprise tier: fair-use credits & seats (-1), concrete ceiling.
+    expect(byId.enterprise).toMatchObject({
+      pricePerMonth: 2_500_000,
+      productId: null,
+      talkToSales: true,
+      limits: { creditsPerMonth: -1, staffSeats: -1, bvumCeiling: 4_000_000_000 },
+    });
   });
 
   it('GET /plans with NO token -> 401 UNAUTHENTICATED ErrorEnvelope', async () => {

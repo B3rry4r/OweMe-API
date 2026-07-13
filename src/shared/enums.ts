@@ -11,8 +11,8 @@ export type Role = (typeof ROLE_VALUES)[number];
 export const REMINDER_TONE_VALUES = ['gentle', 'friendly', 'final'] as const;
 export type ReminderTone = (typeof REMINDER_TONE_VALUES)[number];
 
-// Canonical plan ids (S-3; fail-closed to 'starter')
-export const PLAN_ID_VALUES = ['starter', 'market', 'business', 'enterprise'] as const;
+// Canonical plan ids (S-3, model rev 2: FIVE tiers; fail-closed to 'starter')
+export const PLAN_ID_VALUES = ['starter', 'market', 'business', 'wholesale', 'enterprise'] as const;
 export type PlanId = (typeof PLAN_ID_VALUES)[number];
 
 // Debt status — DERIVED server-side, never stored
@@ -48,8 +48,8 @@ export const ENTITLEMENT_STATE_VALUES = [
 ] as const;
 export type EntitlementState = (typeof ENTITLEMENT_STATE_VALUES)[number];
 
-// Billing transaction kind
-export const BILLING_KIND_VALUES = ['subscription', 'messages-bundle', 'ai-bundle'] as const;
+// Billing transaction kind (model rev 2: one unified credits bundle replaces messages/ai bundles)
+export const BILLING_KIND_VALUES = ['subscription', 'credits-bundle'] as const;
 export type BillingKind = (typeof BILLING_KIND_VALUES)[number];
 
 // IAP platform
@@ -66,6 +66,7 @@ export const ERROR_CODE_VALUES = [
   'UNAUTHENTICATED',
   'FORBIDDEN',
   'PLAN_REQUIRED',
+  'BVUM_CEILING',
   'NOT_FOUND',
   'VERSION_CONFLICT',
   'RATE_LIMITED',
@@ -79,6 +80,7 @@ export const ERROR_CODE_STATUS: Record<ErrorCode, number> = {
   UNAUTHENTICATED: 401,
   FORBIDDEN: 403,
   PLAN_REQUIRED: 403,
+  BVUM_CEILING: 403, // rev 2: creating a debt that breaches the plan's BVUM ceiling
   NOT_FOUND: 404,
   VERSION_CONFLICT: 409,
   RATE_LIMITED: 429,

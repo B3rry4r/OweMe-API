@@ -133,7 +133,16 @@ export class FlutterwaveGateway implements PaystackGateway {
       customer: { email },
     };
     if (input.metadata !== undefined) body.meta = input.metadata;
-    if (input.subaccountCode !== null) body.subaccounts = [{ id: input.subaccountCode }];
+    if (input.subaccountCode !== null) {
+      const sub: Record<string, unknown> = { id: input.subaccountCode };
+      // Rev 2 commission: a flat charge the platform takes off this subaccount's split.
+      // Flutterwave amounts are naira, so convert the kobo charge (kobo -> naira).
+      if (input.transactionCharge !== undefined) {
+        sub.transaction_charge_type = 'flat';
+        sub.transaction_charge = input.transactionCharge / 100;
+      }
+      body.subaccounts = [sub];
+    }
 
     const data = await this.request<{ link: string }>('POST', '/payments', body);
     return { url: data.link, reference: input.reference };

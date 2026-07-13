@@ -9,16 +9,21 @@ import {
   PAGINATION_DEFAULT_LIMIT,
   PAGINATION_MAX_LIMIT,
 } from '../shared';
-import { RECEIPT_VERIFIER, ReceiptVerifier, ValidationException } from '../common';
+import {
+  RECEIPT_VERIFIER,
+  ReceiptVerifier,
+  ValidationException,
+  ForbiddenAppException,
+} from '../common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreditLedgerService } from '../usage/credit-ledger.service';
-import { SendAllowanceService } from '../usage/send-allowance.service';
-import { resolveBundle } from './bundle-catalog';
+import { currentPeriodStart } from '../usage/period.util';
+import { resolveBundle, MONTHLY_BUNDLE_CAP } from './bundle-catalog';
 
-/** POST /billing/verify-receipt response — one of entitlement (plan) or ledger (bundle). */
+/** POST /billing/verify-receipt response — one of entitlement (plan) or ledger (unified credits). */
 export interface VerifyReceiptResponse {
   entitlement?: Subscription;
-  ledger?: { sendAllowance?: number; aiCredits?: number };
+  ledger?: { credits?: number };
 }
 
 /** Subscription entitlement period after a successful plan purchase/renewal (days). */
@@ -38,7 +43,6 @@ export class BillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly credits: CreditLedgerService,
-    private readonly sends: SendAllowanceService,
     @Inject(RECEIPT_VERIFIER) private readonly verifier: ReceiptVerifier,
   ) {}
 
@@ -94,13 +98,32 @@ export class BillingService {
       return this.applyPlan(businessId, plan, result.transactionId);
     }
 
-    // 2) Consumable bundle? (message allowance or AI credits)
+    // 2) Consumable OweMe-credits bundle. HARD CAP: 2 verified bundle receipts per
+    // business per calendar month — reject the third (the app also blocks client-side,
+    // but the server is the authority). The idempotent re-verify above is exempt (it
+    // returns before reaching here), so only genuinely-new receipts count.
     const bundle = resolveBundle(dto.productId);
     if (bundle) {
+      if ((await this.bundlePurchasesThisMonth(businessId)) >= MONTHLY_BUNDLE_CAP) {
+        throw new ForbiddenAppException(
+          `Monthly credit-bundle limit reached (max ${MONTHLY_BUNDLE_CAP} per calendar month)`,
+        );
+      }
       return this.applyBundle(businessId, bundle, dto.productId, result.transactionId);
     }
 
     throw new ValidationException(`Unknown productId: ${dto.productId}`);
+  }
+
+  /** Count of verified credit-bundle receipts recorded this calendar month for the business. */
+  private async bundlePurchasesThisMonth(businessId: string): Promise<number> {
+    return this.prisma.billingTransaction.count({
+      where: {
+        businessId,
+        kind: 'credits-bundle',
+        createdAt: { gte: currentPeriodStart() },
+      },
+    });
   }
 
   /** GET /billing/history — cursor-paginated purchase history (renewals + bundles), newest first. */
@@ -173,14 +196,8 @@ export class BillingService {
     productId: string,
     transactionId: string,
   ): Promise<VerifyReceiptResponse> {
-    let ledger: VerifyReceiptResponse['ledger'];
-    if (bundle.ledger === 'send') {
-      const remaining = await this.sends.creditSend(businessId, bundle.quantity);
-      ledger = { sendAllowance: remaining };
-    } else {
-      const balance = await this.credits.creditCredits(businessId, bundle.quantity, 'bundle');
-      ledger = { aiCredits: balance };
-    }
+    const balance = await this.credits.creditCredits(businessId, bundle.quantity, 'bundle');
+    const ledger: VerifyReceiptResponse['ledger'] = { credits: balance };
 
     await this.recordTransaction(
       transactionId,
@@ -198,16 +215,13 @@ export class BillingService {
   private async responseForKind(
     businessId: string,
     kind: string,
-    productId: string,
+    _productId: string,
   ): Promise<VerifyReceiptResponse> {
     if (kind === 'subscription') {
       return { entitlement: await this.getSubscription(businessId) };
     }
-    const bundle = resolveBundle(productId);
-    if (bundle?.ledger === 'credit') {
-      return { ledger: { aiCredits: await this.credits.getBalance(businessId) } };
-    }
-    return { ledger: { sendAllowance: await this.sends.getRemaining(businessId) } };
+    // Any bundle credits the unified OweMe-credits ledger.
+    return { ledger: { credits: await this.credits.getBalance(businessId) } };
   }
 
   private recordTransaction(

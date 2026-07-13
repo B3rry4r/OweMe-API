@@ -123,6 +123,9 @@ export interface DebtView extends Debt {
 
 export interface PayLink {
   url: string;
+  // Model rev 2: ONE combined processing fee for this payment (2.5% + ₦100, capped ₦2,500),
+  // in kobo. Never exposes the Paystack-vs-OweMe breakdown.
+  fee: number;
 }
 
 export interface ReminderScheduleStep {
@@ -233,10 +236,9 @@ export interface Bank {
 
 // --- Plans / billing / ledgers ---------------------------------------------
 export interface PlanLimits {
-  sendsPerMonth: number; // -1 fair-use
-  aiCreditsPerMonth: number; // -1 fair-use
+  creditsPerMonth: number; // unified OweMe credits, -1 fair-use (rev 2)
   staffSeats: number; // -1 unlimited
-  bvumCeiling: number | null; // kobo, null unlimited
+  bvumCeiling: number | null; // kobo; rev 2: concrete for every tier (enterprise = banded base, never null)
 }
 
 export interface Plan {
@@ -277,9 +279,15 @@ export interface MeterView {
   periodStart: string;
 }
 
+// Model rev 2: ONE unified "OweMe credits" meter (used/limit) replaces the two old meters.
 export interface UsageResponse {
-  sendAllowance: { used: number; remaining: number; monthlyGrant: number; periodStart: string };
-  aiCredits: { used: number; balance: number; monthlyGrant: number; periodStart: string };
+  credits: {
+    used: number;
+    limit: number; // = monthly grant; -1 = fair-use (unmetered)
+    balance: number; // credits remaining this period
+    monthlyGrant: number; // same as limit; kept for clarity
+    periodStart: string;
+  };
 }
 
 // --- BVUM ------------------------------------------------------------------

@@ -1,9 +1,10 @@
 /**
- * Plan catalog seed — the 4 canonical plans (conventions.md §Metering).
+ * Plan catalog seed — MODEL REV 2 (FRONTEND-HANDOFF.md §4). Five canonical tiers.
  * Money is integer kobo (S-1). Idempotent: upsert by plan id, safe to re-run.
  *
- *   BVUM ceilings: starter/market ₦2M, business ₦20M, enterprise unlimited (null).
- *   -1 = fair-use / unlimited limit.
+ *   Unified OweMe credits/month: 50 / 300 / 1,200 / 3,000 / fair-use(-1).
+ *   BVUM ceilings (kobo): ₦300k / ₦1.5M / ₦6M / ₦20M / ₦40M base (enterprise
+ *   is BANDED via Business.bvumCeilingOverride — never unlimited/null).
  */
 import { PrismaClient } from '@prisma/client';
 
@@ -21,8 +22,7 @@ type PlanSeed = {
   productId: string | null;
   talkToSales: boolean;
   recommended: boolean;
-  sendsPerMonth: number;
-  aiCreditsPerMonth: number;
+  creditsPerMonth: number; // unified OweMe credits, -1 = fair-use
   staffSeats: number;
   bvumCeiling: number | null; // kobo
 };
@@ -37,16 +37,15 @@ const PLANS: PlanSeed[] = [
       'Unlimited customers & debts',
       'Receipts, offline mode & basic dashboard',
       'Automated reminder scheduling',
-      '10 automated SMS/WhatsApp sends / month',
-      '10 AI credits / month',
+      '50 OweMe credits / month',
+      'Unlimited manual reminders · receipts',
     ],
     productId: null,
     talkToSales: false,
     recommended: false,
-    sendsPerMonth: 10,
-    aiCreditsPerMonth: 10,
+    creditsPerMonth: 50,
     staffSeats: 0,
-    bvumCeiling: 2 * M * NAIRA, // ₦2M
+    bvumCeiling: 300_000 * NAIRA, // ₦300k
   },
   {
     id: 'market',
@@ -55,17 +54,16 @@ const PLANS: PlanSeed[] = [
     tagline: 'For growing market traders.',
     features: [
       'Everything in Starter',
-      '50 automated SMS/WhatsApp sends / month',
-      '100 AI credits / month',
+      '300 credits / month · pay-links',
       '1 staff seat',
+      'Business value up to ₦1.5M',
     ],
     productId: 'oweme_market_monthly',
     talkToSales: false,
     recommended: true,
-    sendsPerMonth: 50,
-    aiCreditsPerMonth: 100,
+    creditsPerMonth: 300,
     staffSeats: 1,
-    bvumCeiling: 2 * M * NAIRA, // ₦2M
+    bvumCeiling: 1.5 * M * NAIRA, // ₦1.5M
   },
   {
     id: 'business',
@@ -74,49 +72,69 @@ const PLANS: PlanSeed[] = [
     tagline: 'For established businesses managing at scale.',
     features: [
       'Everything in Market',
-      '150 automated SMS/WhatsApp sends / month',
-      '500 AI credits / month',
+      '1,200 credits / month',
       '5 staff seats',
-      'Higher business value ceiling (₦20M)',
+      'Business value up to ₦6M',
     ],
     productId: 'oweme_business_monthly',
     talkToSales: false,
     recommended: false,
-    sendsPerMonth: 150,
-    aiCreditsPerMonth: 500,
+    creditsPerMonth: 1_200,
     staffSeats: 5,
+    bvumCeiling: 6 * M * NAIRA, // ₦6M
+  },
+  {
+    id: 'wholesale',
+    name: 'Wholesale',
+    pricePerMonth: 12_000 * NAIRA, // ₦12,000
+    tagline: 'For distributors and wholesalers.',
+    features: [
+      'Everything in Business',
+      '3,000 credits / month',
+      '15 staff seats',
+      'Business value up to ₦20M',
+    ],
+    productId: 'oweme_wholesale_monthly',
+    talkToSales: false,
+    recommended: false,
+    creditsPerMonth: 3_000,
+    staffSeats: 15,
     bvumCeiling: 20 * M * NAIRA, // ₦20M
   },
   {
     id: 'enterprise',
     name: 'Enterprise',
-    pricePerMonth: 18_000 * NAIRA, // from ₦18,000 (off-store)
-    tagline: 'Off-store — talk to sales.',
+    pricePerMonth: 25_000 * NAIRA, // from ₦25,000 (off-store, banded)
+    tagline: 'Off-store — talk to sales. Banded, never unlimited.',
     features: [
-      'Everything in Business',
-      'Fair-use automated sends',
-      'Fair-use AI credits',
-      'Unlimited staff seats',
-      'No business value ceiling',
+      'Everything in Wholesale',
+      'Fair-use credits · API access',
+      'Unlimited staff · branches',
+      'Business value from ₦40M (banded, +₦20M per band)',
       'Priority support',
     ],
     productId: null,
     talkToSales: true,
     recommended: false,
-    sendsPerMonth: -1, // fair-use
-    aiCreditsPerMonth: -1, // fair-use
+    creditsPerMonth: -1, // fair-use
     staffSeats: -1, // unlimited
-    bvumCeiling: null, // unlimited
+    bvumCeiling: 40 * M * NAIRA, // ₦40M base; extended per-business via bvumCeilingOverride (never null)
   },
 ];
 
 async function main() {
   for (const p of PLANS) {
-    const { id, features, ...rest } = p;
+    const { id, features, bvumCeiling, ...rest } = p;
+    // bvumCeiling is a BigInt column (rev 2 ceilings exceed 32-bit Int).
+    const data = {
+      features: features as unknown as object,
+      bvumCeiling: bvumCeiling === null ? null : BigInt(bvumCeiling),
+      ...rest,
+    };
     await prisma.plan.upsert({
       where: { id },
-      create: { id, features: features as unknown as object, ...rest },
-      update: { features: features as unknown as object, ...rest },
+      create: { id, ...data },
+      update: { ...data },
     });
   }
   const count = await prisma.plan.count();

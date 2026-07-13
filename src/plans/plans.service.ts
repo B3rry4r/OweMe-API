@@ -12,10 +12,9 @@ interface PlanRow {
   productId: string | null;
   talkToSales: boolean;
   recommended: boolean;
-  sendsPerMonth: number;
-  aiCreditsPerMonth: number;
+  creditsPerMonth: number;
   staffSeats: number;
-  bvumCeiling: number | null;
+  bvumCeiling: bigint | null; // BigInt column; serialized to number (< 2^53) for the wire
 }
 
 /**
@@ -45,10 +44,9 @@ export class PlansService {
       talkToSales: r.talkToSales,
       recommended: r.recommended,
       limits: {
-        sendsPerMonth: r.sendsPerMonth,
-        aiCreditsPerMonth: r.aiCreditsPerMonth,
+        creditsPerMonth: r.creditsPerMonth,
         staffSeats: r.staffSeats,
-        bvumCeiling: r.bvumCeiling,
+        bvumCeiling: r.bvumCeiling === null ? null : Number(r.bvumCeiling),
       },
     };
   }

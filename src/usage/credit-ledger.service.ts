@@ -4,6 +4,16 @@ import { PlanRequiredException } from '../common';
 import { currentPeriodStart, isStalePeriod } from './period.util';
 import { resolvePlanGrants, nextPlanId } from './plan-grants';
 
+/**
+ * Weighted credit costs, on SUCCESS only (rev 2, FRONTEND-HANDOFF.md §4).
+ * Manual deeplink sends and printable statements are unmetered (never debit).
+ */
+export const CREDIT_WEIGHTS = {
+  reminderSend: 5, // one automated SMS/WhatsApp reminder
+  voiceParse: 1, // one voice-to-debt parse
+  insightOrRisk: 4, // one AI insight or customer-risk score
+} as const;
+
 /** Raw CreditLedger row (one shared AI-credit ledger per business). */
 interface CreditLedgerRow {
   businessId: string;
@@ -44,7 +54,7 @@ export class CreditLedgerService {
 
     if (ledger.balance < weight) {
       const grants = await resolvePlanGrants(this.prisma, businessId);
-      throw new PlanRequiredException(nextPlanId(grants.planId), 'Out of AI credits');
+      throw new PlanRequiredException(nextPlanId(grants.planId), 'Out of OweMe credits');
     }
 
     const updated = await this.prisma.creditLedger.update({
@@ -92,7 +102,7 @@ export class CreditLedgerService {
 
     if (!existing) {
       const grants = await resolvePlanGrants(this.prisma, businessId);
-      const grant = grants.aiCreditsPerMonth;
+      const grant = grants.creditsPerMonth;
       return (await this.prisma.creditLedger.create({
         data: { businessId, balance: grant, monthlyGrant: grant, periodStart: period },
       })) as CreditLedgerRow;
@@ -100,10 +110,14 @@ export class CreditLedgerService {
 
     if (isStalePeriod(existing.periodStart)) {
       const grants = await resolvePlanGrants(this.prisma, businessId);
-      const grant = grants.aiCreditsPerMonth;
+      const grant = grants.creditsPerMonth;
+      // Top up to the plan's monthly grant, but never below the current balance:
+      // purchased-bundle credits above the grant carry over (the trader paid for them).
+      // Fair-use (-1) stays unmetered.
+      const balance = grant < 0 ? grant : Math.max(existing.balance, grant);
       return (await this.prisma.creditLedger.update({
         where: { businessId },
-        data: { balance: grant, monthlyGrant: grant, periodStart: period },
+        data: { balance, monthlyGrant: grant, periodStart: period },
       })) as CreditLedgerRow;
     }
 

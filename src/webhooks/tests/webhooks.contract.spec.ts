@@ -25,7 +25,6 @@ import {
   VerifyReceiptResult,
 } from '../../common';
 import { CreditLedgerService } from '../../usage/credit-ledger.service';
-import { SendAllowanceService } from '../../usage/send-allowance.service';
 import { WebhooksModule } from '../webhooks.module';
 
 /**
@@ -236,22 +235,27 @@ describe('Webhooks (contract)', () => {
 
   // --- POST /webhooks/iap ----------------------------------------------------
 
-  it('valid consumable IAP event (no JWT) -> 200 and credits the matching ledger', async () => {
-    const before = await credits.getBalance(BIZ_IAP); // lazily inits (starter grant = 10)
+  it('valid unified-credits IAP event (no JWT) -> 200, credits ledger + records credits-bundle', async () => {
+    const before = await credits.getBalance(BIZ_IAP); // lazily inits (plan grant)
 
     const res = await request(app.getHttpServer())
       .post('/webhooks/iap')
       .set('Content-Type', 'application/json')
       .send({
         platform: 'android',
-        productId: 'oweme_ai_credits_50',
+        productId: 'oweme_credits_600',
         receipt: 'iap-receipt-1',
         businessId: BIZ_IAP,
         notificationType: 'CONSUMPTION_REQUEST',
       }); // no Authorization header -> proves the route is @Public
 
     expect(res.status).toBe(200);
-    expect(await credits.getBalance(BIZ_IAP)).toBe(before + 50);
+    expect(await credits.getBalance(BIZ_IAP)).toBe(before + 600);
+
+    const txns = await prisma.billingTransaction.findMany({ where: { businessId: BIZ_IAP } });
+    expect(txns.length).toBe(1);
+    expect(txns[0].kind).toBe('credits-bundle');
+    expect(txns[0].productId).toBe('oweme_credits_600');
   });
 
   it('re-post the SAME IAP transaction -> idempotent (no double credit)', async () => {
@@ -261,12 +265,15 @@ describe('Webhooks (contract)', () => {
       .set('Content-Type', 'application/json')
       .send({
         platform: 'android',
-        productId: 'oweme_ai_credits_50',
+        productId: 'oweme_credits_600',
         receipt: 'iap-receipt-1',
         businessId: BIZ_IAP,
       });
 
     expect(res.status).toBe(200);
     expect(await credits.getBalance(BIZ_IAP)).toBe(before); // unchanged
+
+    const txns = await prisma.billingTransaction.findMany({ where: { businessId: BIZ_IAP } });
+    expect(txns.length).toBe(1); // no duplicate record
   });
 });

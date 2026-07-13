@@ -51,6 +51,17 @@ export class PlanRequiredException extends AppException {
   }
 }
 
+/**
+ * 403 BVUM_CEILING (model rev 2) — creating a NEW debt would push the business's BVUM
+ * above the plan's ceiling. `error.requiredPlan` names the tier that covers the new value.
+ * Instant, no grace window. Existing debts/payments/reminders are never blocked by this.
+ */
+export class BvumCeilingException extends AppException {
+  constructor(requiredPlan: string, message = 'Business value ceiling reached — upgrade to add this debt') {
+    super('BVUM_CEILING', message, { extra: { requiredPlan } });
+  }
+}
+
 export class NotFoundAppException extends AppException {
   constructor(message = 'Not found') {
     super('NOT_FOUND', message);

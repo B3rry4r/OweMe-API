@@ -12,17 +12,19 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { MESSAGE_SENDER } from '../../common/providers/tokens';
 import { UsageModule } from '../../usage/usage.module';
+import { CREDIT_WEIGHTS } from '../../usage/credit-ledger.service';
 import { RemindersModule } from '../reminders.module';
 import { REMINDER_CHANNEL_VALUES, REMINDER_STATUS_VALUES, Role } from '../../shared';
 
 /**
  * Reminder (contract). Boots a real Nest app with the SAME global guards (JwtAuthGuard +
  * RolesGuard), HttpExceptionFilter and ValidationPipe as app.module. Imports UsageModule for
- * the exported SendAllowanceService (metering) and overrides MESSAGE_SENDER with a spy stub.
+ * the exported CreditLedgerService (rev 2 unified "OweMe credits" metering) and overrides
+ * MESSAGE_SENDER with a spy stub.
  *
- * Seeds a starter-plan tenant (small send allowance) + owner/staff + a customer + a debt, and
- * asserts: metered sms send -> 201 sent + allowance decremented; free channels (call/manual/
- * printable) -> 201 recorded + allowance untouched; exhausted allowance -> 403 PLAN_REQUIRED
+ * Seeds a starter-plan tenant (unified credit ledger) + owner/staff + a customer + a debt, and
+ * asserts: metered sms send -> 201 sent + 5 credits debited; free channels (call/manual/
+ * printable) -> 201 recorded + credits untouched; exhausted credits -> 403 PLAN_REQUIRED
  * with NO sent row persisted; GET status filter + debt/customer join + cursor pagination; retry
  * of a failed row -> 200 sent; auth/validation rejection. Asserts SHAPES + metering, never snapshots.
  */
@@ -55,16 +57,21 @@ describe('Reminder (contract)', () => {
   );
   const DAY = 24 * 60 * 60 * 1000;
 
-  const setAllowance = (remaining: number): Promise<unknown> =>
-    prisma.sendAllowanceLedger.upsert({
+  // rev 2: metering runs off the ONE unified "OweMe credits" ledger. An immediate metered
+  // (sms|whatsapp) send debits CREDIT_WEIGHTS.reminderSend (=5) credits; free channels never
+  // debit. Seed/deplete the unified creditLedger directly to drive allowance in these tests.
+  const CREDITS_PER_SEND = CREDIT_WEIGHTS.reminderSend; // 5
+
+  const setCredits = (balance: number): Promise<unknown> =>
+    prisma.creditLedger.upsert({
       where: { businessId: BID },
-      create: { businessId: BID, remaining, monthlyGrant: 10, periodStart: MONTH_START },
-      update: { remaining, monthlyGrant: 10, periodStart: MONTH_START },
+      create: { businessId: BID, balance, monthlyGrant: 50, periodStart: MONTH_START },
+      update: { balance, monthlyGrant: 50, periodStart: MONTH_START },
     });
 
-  const remainingNow = async (): Promise<number> => {
-    const l = await prisma.sendAllowanceLedger.findUnique({ where: { businessId: BID } });
-    return l!.remaining;
+  const creditBalanceNow = async (): Promise<number> => {
+    const l = await prisma.creditLedger.findUnique({ where: { businessId: BID } });
+    return l!.balance;
   };
 
   const expectReminderShape = (r: Record<string, unknown>): void => {
@@ -108,7 +115,7 @@ describe('Reminder (contract)', () => {
       await prisma.reminder.deleteMany({ where: { businessId: b } });
       await prisma.debt.deleteMany({ where: { businessId: b } });
       await prisma.customer.deleteMany({ where: { businessId: b } });
-      await prisma.sendAllowanceLedger.deleteMany({ where: { businessId: b } });
+      await prisma.creditLedger.deleteMany({ where: { businessId: b } });
     }
 
     for (const [id, name] of [
@@ -170,7 +177,8 @@ describe('Reminder (contract)', () => {
       },
     });
 
-    await setAllowance(5);
+    // Starter grant = 50 credits (10 metered sends); ample for the immediate sends below.
+    await setCredits(50);
 
     ownerToken = mint('owner');
     staffToken = mint('staff');
@@ -191,7 +199,7 @@ describe('Reminder (contract)', () => {
   });
 
   it('POST /reminders channel=sms -> 201 sent; allowance decremented; delivery dispatched', async () => {
-    const before = await remainingNow();
+    const before = await creditBalanceNow();
     const id = '01912ddd-0000-7000-8000-remd00post001';
     const res = await request(app.getHttpServer())
       .post('/reminders')
@@ -205,13 +213,13 @@ describe('Reminder (contract)', () => {
     expect(res.body.status).toBe('sent');
     expect(typeof res.body.sentAt).toBe('string');
 
-    expect(await remainingNow()).toBe(before - 1); // metered debit
+    expect(await creditBalanceNow()).toBe(before - CREDITS_PER_SEND); // metered debit (5 credits)
     expect(sendSpy).toHaveBeenCalledTimes(1); // dispatched via MESSAGE_SENDER stub
   });
 
   it('POST /reminders channel=manual/call/printable -> 201 recorded; allowance NOT decremented; no dispatch', async () => {
     for (const channel of ['manual', 'call', 'printable'] as const) {
-      const before = await remainingNow();
+      const before = await creditBalanceNow();
       const id = `01912ddd-0000-7000-8000-remd000free${channel.slice(0, 2)}`;
       const res = await request(app.getHttpServer())
         .post('/reminders')
@@ -220,7 +228,7 @@ describe('Reminder (contract)', () => {
       expect(res.status).toBe(201);
       expect(res.body.channel).toBe(channel);
       expect(res.body.status).toBe('sent');
-      expect(await remainingNow()).toBe(before); // free — unmetered
+      expect(await creditBalanceNow()).toBe(before); // free — unmetered
     }
     expect(sendSpy).not.toHaveBeenCalled(); // no delivery contract for free channels
   });
@@ -232,7 +240,7 @@ describe('Reminder (contract)', () => {
       .set('Authorization', `Bearer ${ownerToken}`)
       .send({ id, debtId: DEBT, channel: 'sms' });
     expect(first.status).toBe(201);
-    const afterFirst = await remainingNow();
+    const afterFirst = await creditBalanceNow();
 
     const again = await request(app.getHttpServer())
       .post('/reminders')
@@ -240,11 +248,11 @@ describe('Reminder (contract)', () => {
       .send({ id, debtId: DEBT, channel: 'sms' });
     expect(again.status).toBe(200);
     expect(again.body.id).toBe(id);
-    expect(await remainingNow()).toBe(afterFirst); // not debited again
+    expect(await creditBalanceNow()).toBe(afterFirst); // not debited again
   });
 
   it('POST /reminders future scheduledFor -> 201 scheduled; not metered/sent', async () => {
-    const before = await remainingNow();
+    const before = await creditBalanceNow();
     const id = '01912ddd-0000-7000-8000-remd00sched01';
     const res = await request(app.getHttpServer())
       .post('/reminders')
@@ -258,7 +266,7 @@ describe('Reminder (contract)', () => {
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('scheduled');
     expect(res.body.sentAt).toBeNull();
-    expect(await remainingNow()).toBe(before); // future send not yet metered
+    expect(await creditBalanceNow()).toBe(before); // future send not yet metered
   });
 
   it('POST /reminders invalid channel -> 422 VALIDATION_ERROR', async () => {
@@ -271,7 +279,7 @@ describe('Reminder (contract)', () => {
   });
 
   it('POST /reminders sms with exhausted allowance -> 403 PLAN_REQUIRED; NO sent row recorded', async () => {
-    await setAllowance(0);
+    await setCredits(0); // out of credits (balance < 5) -> next metered send is rejected
     const id = '01912ddd-0000-7000-8000-remd00exha001';
     const res = await request(app.getHttpServer())
       .post('/reminders')
@@ -342,8 +350,8 @@ describe('Reminder (contract)', () => {
   });
 
   it('POST /reminders/:id/retry on a FAILED row -> 200 sent; re-metered', async () => {
-    await setAllowance(5);
-    const before = await remainingNow();
+    await setCredits(50);
+    const before = await creditBalanceNow();
     const res = await request(app.getHttpServer())
       .post(`/reminders/${R_FAILED}/retry`)
       .set('Authorization', `Bearer ${staffToken}`);
@@ -352,7 +360,7 @@ describe('Reminder (contract)', () => {
     expect(res.body.id).toBe(R_FAILED);
     expect(res.body.status).toBe('sent');
     expect(typeof res.body.sentAt).toBe('string');
-    expect(await remainingNow()).toBe(before - 1); // re-debited for the sms retry
+    expect(await creditBalanceNow()).toBe(before - CREDITS_PER_SEND); // re-debited (5 credits) for the sms retry
     expect(sendSpy).toHaveBeenCalledTimes(1);
   });
 

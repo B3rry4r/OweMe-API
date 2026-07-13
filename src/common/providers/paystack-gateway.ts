@@ -23,6 +23,8 @@ export interface PaymentRequestInput {
   amount: number; // kobo
   reference: string;
   subaccountCode: string | null;
+  // Rev 2: flat platform commission (kobo) the MAIN account takes via the subaccount split.
+  transactionCharge?: number;
   metadata?: Record<string, unknown>;
 }
 

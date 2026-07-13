@@ -31,7 +31,8 @@ model Business {
   category           String // free text
   currency           String // composed '<code> (<symbol>)'
   reminderTone       String // enum: gentle|friendly|final  (S-5)
-  plan               String  @default("starter") // canonical: starter|market|business|enterprise (S-3); fail-closed to starter
+  plan               String  @default("starter") // canonical: starter|market|business|wholesale|enterprise (S-3); fail-closed to starter
+  bvumCeilingOverride BigInt? // kobo; rev 2 enterprise banding — sales-provisioned effective ceiling (base + ₦20M bands). null -> plan ceiling. BigInt: 40M+ naira exceeds 32-bit Int
   paystackSubaccount String?
   logoUrl            String?
   branchId           String? // reserved for Enterprise; unused, not gated
@@ -50,7 +51,6 @@ model Business {
   payoutAccount           PayoutAccount?
   subscription            Subscription?
   creditLedger            CreditLedger?
-  sendAllowanceLedger     SendAllowanceLedger?
 }
 
 // ---------------------------------------------------------------------------
@@ -235,11 +235,10 @@ model Plan {
   productId         String?
   talkToSales       Boolean @default(false)
   recommended       Boolean @default(false)
-  // limits (flattened; -1 = fair-use/unlimited, null bvumCeiling = unlimited)
-  sendsPerMonth     Int
-  aiCreditsPerMonth Int
+  // limits (flattened; -1 = fair-use/unlimited). Rev 2: ONE unified credits grant.
+  creditsPerMonth   Int // unified OweMe credits/month, -1 = fair-use
   staffSeats        Int
-  bvumCeiling       Int? // kobo
+  bvumCeiling       BigInt? // kobo; rev 2 ceilings reach ₦40M+ (4e9 kobo) — exceeds 32-bit Int
 }
 
 model Subscription {
@@ -267,7 +266,7 @@ model BillingTransaction {
 }
 
 model CreditLedger {
-  businessId   String   @id // one shared AI-credit ledger per business
+  businessId   String   @id // rev 2: the ONE unified "OweMe credits" ledger per business
   balance      Int      @default(0)
   monthlyGrant Int      @default(0)
   periodStart  DateTime @default(now())
@@ -275,11 +274,3 @@ model CreditLedger {
   business Business @relation(fields: [businessId], references: [id])
 }
 
-model SendAllowanceLedger {
-  businessId   String   @id // one send-allowance ledger per business
-  remaining    Int      @default(0)
-  monthlyGrant Int      @default(0)
-  periodStart  DateTime @default(now())
-
-  business Business @relation(fields: [businessId], references: [id])
-}

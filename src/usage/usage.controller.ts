@@ -4,8 +4,8 @@ import { Roles, BusinessId } from '../common';
 import { UsageService } from './usage.service';
 
 /**
- * GET /usage — both metering meters (send allowance + AI credits) for the JWT businessId.
- * Owner-only surface (subscription/usage screen). Ledgers are lazily initialized on read.
+ * GET /usage — the ONE unified "OweMe credits" meter (used/limit) for the JWT businessId
+ * (model rev 2). Owner-only surface (subscription/usage screen). Ledger lazily initialized on read.
  */
 @Controller('usage')
 export class UsageController {
