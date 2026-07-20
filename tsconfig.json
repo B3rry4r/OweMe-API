@@ -20,9 +20,9 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "paths": {
-      "@shared": ["src/shared/index.ts"],
+      "@shared": ["src/shared"],
       "@shared/*": ["src/shared/*"],
-      "@common": ["src/common/index.ts"],
+      "@common": ["src/common"],
       "@common/*": ["src/common/*"]
     }
   }
