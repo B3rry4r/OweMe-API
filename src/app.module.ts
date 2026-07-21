@@ -26,6 +26,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { ActivityModule } from './activity/activity.module';
 import { SyncModule } from './sync/sync.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -60,6 +61,8 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ActivityModule,
     SyncModule,
     WebhooksModule,
+    // Admin surface (all /admin/* resources aggregate inside AdminModule):
+    AdminModule,
     // ────────────────────────────────────────────────────────────────────────
   ],
   providers: [
