@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Authoritative integration gate: run each contract spec file against its OWN fresh
-# SQLite DB. Contract specs are tenant-scoped and independent; a shared parallel DB
-# only causes fixture-id collisions across suites (not a product bug), so we isolate
-# per file. `npm run build` already proves the modules compose in app.module.ts.
+# Authoritative integration gate: run every contract AND e2e spec file against its OWN
+# fresh SQLite DB. Specs are tenant-scoped and independent; a shared parallel DB only
+# causes fixture-id collisions across suites (not a product bug), so we isolate per
+# file. `npm run build` already proves the modules compose in app.module.ts.
 set -u
 cd "$(dirname "$0")/.."
 fail=0
 pass=0
-specs=$(find src test -name '*.contract.spec.ts' | sort)
+specs=$(find src test \( -name '*.contract.spec.ts' -o -name '*.e2e-spec.ts' \) | sort)
 for spec in $specs; do
   db="/tmp/oweme-ci-$(echo "$spec" | tr '/.' '--').db"
   rm -f "$db" "$db-journal"

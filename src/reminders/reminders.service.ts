@@ -18,6 +18,7 @@ import {
   ValidationException,
 } from '../common';
 import { CreditLedgerService, CREDIT_WEIGHTS } from '../usage/credit-ledger.service';
+import { SMS_ROUTE_COST_KOBO, UsageEventRecorder } from '../usage/usage-event.recorder';
 
 /**
  * Channels the SERVER can dispatch and therefore meter. Only sms today: there is no
@@ -68,6 +69,7 @@ export class RemindersService {
     private readonly prisma: PrismaService,
     private readonly credits: CreditLedgerService,
     @Inject(MESSAGE_SENDER) private readonly sender: MessageSender,
+    private readonly usageEvents: UsageEventRecorder,
   ) {}
 
   /** GET /reminders — status filter + cursor pagination; each row joined to its debt+customer. */
@@ -186,6 +188,14 @@ export class RemindersService {
         phone: row.debt.customer.phone,
         message: row.message ?? defaultMessage(),
         channel: 'sms',
+      });
+      // Instrumentation (best-effort, never fails the retry).
+      await this.usageEvents.record({
+        businessId,
+        type: 'send',
+        credits: CREDIT_WEIGHTS.reminderSend,
+        costKoboEstimate: SMS_ROUTE_COST_KOBO,
+        meta: { reminderId: id, channel, retry: true },
       });
     }
 

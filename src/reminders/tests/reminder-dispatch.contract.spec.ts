@@ -8,6 +8,7 @@ import { MESSAGE_SENDER } from '../../common/providers/tokens';
 import { MessageSender, SendMessageInput } from '../../common/providers/message-sender';
 import { UsageModule } from '../../usage/usage.module';
 import { CreditLedgerService, CREDIT_WEIGHTS } from '../../usage/credit-ledger.service';
+import { SMS_ROUTE_COST_KOBO, UsageEventRecorder } from '../../usage/usage-event.recorder';
 import { RemindersModule } from '../reminders.module';
 import { ReminderDispatchService } from '../reminder-dispatch.service';
 
@@ -131,6 +132,7 @@ describe('Reminder delivery worker (contract)', () => {
     sendSpy.mockImplementation(async () => ({ providerMessageId: 'spy-1', accepted: true }));
     await prisma.notification.deleteMany({ where: { businessId: BID } });
     await prisma.reminder.deleteMany({ where: { businessId: BID } });
+    await prisma.usageEvent.deleteMany({ where: { businessId: BID } });
     await setCredits(50);
   });
 
@@ -187,6 +189,14 @@ describe('Reminder delivery worker (contract)', () => {
     expect(note!.kind).toBe('reminder');
     expect(note!.body).toContain('Amaka Debtor');
     expect(note!.read).toBe(false);
+
+    // Instrumentation: exactly one usage_events row for the metered scheduled send.
+    const events = await prisma.usageEvent.findMany({ where: { businessId: BID } });
+    expect(events.length).toBe(1);
+    expect(events[0].type).toBe('send');
+    expect(events[0].credits).toBe(CREDITS_PER_SEND);
+    expect(events[0].costKoboEstimate).toBe(SMS_ROUTE_COST_KOBO);
+    expect(events[0].meta).toMatchObject({ reminderId: R_DUE, channel: 'sms', scheduled: true });
   });
 
   it('skips future scheduled reminders untouched (no send, no debit, no transition)', async () => {
@@ -272,9 +282,12 @@ describe('Reminder delivery worker (contract)', () => {
     const balanceBefore = await creditBalanceNow();
 
     // A second instance simulates a second replica/tick: separate in-process latch, same DB.
-    const workerB = new ReminderDispatchService(prisma, credits, {
-      send: sendSpy,
-    } as MessageSender);
+    const workerB = new ReminderDispatchService(
+      prisma,
+      credits,
+      { send: sendSpy } as MessageSender,
+      app.get(UsageEventRecorder),
+    );
     await Promise.all([worker.dispatchDueReminders(), workerB.dispatchDueReminders()]);
     await worker.dispatchDueReminders(); // and a follow-up tick: the row is terminal, not re-claimed
 

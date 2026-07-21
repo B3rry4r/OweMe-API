@@ -15,6 +15,10 @@ import { AdminPayoutsModule } from './payouts/admin-payouts.module';
 import { AdminAuthMonitorModule } from './auth-monitor/admin-auth-monitor.module';
 import { AdminAiUsageModule } from './ai-usage/admin-ai-usage.module';
 import { AdminSyncHealthModule } from './sync-health/admin-sync-health.module';
+import { AdminBusinessActionsModule } from './business-actions/admin-business-actions.module';
+import { AdminReminderActionsModule } from './reminder-actions/admin-reminder-actions.module';
+import { AdminWebhookActionsModule } from './webhook-actions/admin-webhook-actions.module';
+import { AdminOtpRevealModule } from './otp-reveal/admin-otp-reveal.module';
 
 /**
  * The ONE admin aggregation module (conventions: single app.module.ts registration
@@ -42,6 +46,11 @@ import { AdminSyncHealthModule } from './sync-health/admin-sync-health.module';
     AdminAuthMonitorModule,
     AdminAiUsageModule,
     AdminSyncHealthModule,
+    // Wave 3 (action modules):
+    AdminBusinessActionsModule,
+    AdminReminderActionsModule,
+    AdminWebhookActionsModule,
+    AdminOtpRevealModule,
   ],
 })
 export class AdminModule {}

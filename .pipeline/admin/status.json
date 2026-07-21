@@ -10,9 +10,9 @@
     "maintenance-pass": "done 2026-07-21, OUTSIDE admin scope by owner order: reminder delivery worker, webhook hardening, free manual sends billing fix, consistency cleanup. Gate: 27 suites 0 failed. Commit 54086c6.",
     "4-registry-schema": "done 2026-07-21 (admin-registry.json FROZEN: 20 resources, 57 endpoints; migration 20260721101459_admin_surface_additive applied, 27 suites green)",
     "4.5-regression-baseline": "DEVIATION, see below",
-    "5-admin-auth": "in progress (wave 1)",
-    "6-build-waves": "pending",
-    "7-wire-prune": "pending",
+    "5-admin-auth": "done (wave 1, commit c1bd6c8)",
+    "6-build-waves": "done 2026-07-21: wave 2 (12 read resources, 7c29c86), wave 3 (4 action resources + protected-path event instrumentation). Gate: 47 suites, 636 tests, 0 failed.",
+    "7-wire-prune": "next",
     "8-triple-smoke": "pending"
   },
   "deviations": [

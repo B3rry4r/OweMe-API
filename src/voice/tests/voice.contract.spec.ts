@@ -131,6 +131,16 @@ describe('Voice / parse (contract)', () => {
 
     // debit-on-success: balance dropped by exactly 1.
     expect(await credits.getBalance(BIZ_VOICE)).toBe(before - 1);
+
+    // Instrumentation: one usage_events row, metadata ONLY (never the transcript).
+    const event = await prisma.usageEvent.findFirst({
+      where: { businessId: BIZ_VOICE, type: 'voiceParse' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(event).not.toBeNull();
+    expect(event!.credits).toBe(1);
+    expect(event!.meta).toEqual({ outcome: 'success' });
+    expect(JSON.stringify(event)).not.toContain('bags of rice');
   });
 
   it('POST /voice/parse with knownCustomers -> 200 (optional field accepted)', async () => {

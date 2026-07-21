@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthSession, Business, MeResponse, Staff } from '../shared';
 import {
@@ -32,6 +32,7 @@ const REQUEST_MAX_PER_IP = 120; // per rolling minute
  */
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly phoneHits = new Map<string, number[]>();
   private readonly ipHits = new Map<string, number[]>();
 
@@ -43,18 +44,23 @@ export class AuthService {
 
   /** POST /auth/request-otp — always 202. Generates a hashed 6-digit code + sends it (unless throttled). */
   async requestOtp(phone: string, ip: string): Promise<void> {
-    if (this.isThrottled(phone, ip)) return; // silent: still 202, no enumeration
+    if (this.isThrottled(phone, ip)) {
+      await this.logOtpEvent(phone, 'rate-limited', 0);
+      return; // silent: still 202, no enumeration
+    }
 
     const code = generateOtp();
+    const expiresAt = new Date(Date.now() + OTP_TTL_MS);
     await this.prisma.otpCode.create({
       data: {
         id: uuidv7(),
         phone,
         codeHash: hashOtpCode(code),
-        expiresAt: new Date(Date.now() + OTP_TTL_MS),
+        expiresAt,
         attempts: 0,
       },
     });
+    await this.logOtpEvent(phone, 'requested', 0, { code, expiresAt });
     await this.otpSender.sendOtp(phone, code);
   }
 
@@ -64,14 +70,19 @@ export class AuthService {
       where: { phone },
       orderBy: { createdAt: 'desc' },
     });
-    if (!record) throw new UnauthenticatedException('Invalid or expired code');
+    if (!record) {
+      await this.logOtpEvent(phone, 'failed', 0);
+      throw new UnauthenticatedException('Invalid or expired code');
+    }
 
     // Too many attempts on this code -> rate-limited (429).
     if (record.attempts >= OTP_MAX_ATTEMPTS) {
+      await this.logOtpEvent(phone, 'rate-limited', record.attempts);
       throw new RateLimitedException('Too many verification attempts');
     }
     // Expired -> unauthenticated (401).
     if (record.expiresAt.getTime() < Date.now()) {
+      await this.logOtpEvent(phone, 'failed', record.attempts);
       throw new UnauthenticatedException('Invalid or expired code');
     }
     // Wrong code -> count the attempt, then 401.
@@ -80,11 +91,15 @@ export class AuthService {
         where: { id: record.id },
         data: { attempts: { increment: 1 } },
       });
+      await this.logOtpEvent(phone, 'failed', record.attempts + 1);
       throw new UnauthenticatedException('Invalid or expired code');
     }
 
     // Success: consume every outstanding code for this phone.
     await this.prisma.otpCode.deleteMany({ where: { phone } });
+    // Consume the test-account mirror alongside it (best-effort; no-op for real users).
+    await this.prisma.otpTestCode.deleteMany({ where: { phone } }).catch(() => undefined);
+    await this.logOtpEvent(phone, 'verified', record.attempts);
 
     const { staff, business } = await this.resolveAccount(phone);
     const { accessToken, refreshToken } = await this.issuePair(staff, null);
@@ -108,7 +123,7 @@ export class AuthService {
     if (stored.revokedAt) {
       await this.prisma.refreshToken.updateMany({
         where: { userId: stored.userId, revokedAt: null },
-        data: { revokedAt: new Date() },
+        data: { revokedAt: new Date(), revokedReason: 'reuse' },
       });
       throw new UnauthenticatedException('Refresh token reuse detected');
     }
@@ -122,7 +137,7 @@ export class AuthService {
     // Rotate: revoke the presented token, then mint a new pair linked via rotatedFrom.
     await this.prisma.refreshToken.update({
       where: { id: stored.id },
-      data: { revokedAt: new Date() },
+      data: { revokedAt: new Date(), revokedReason: 'rotation' },
     });
     return this.issuePair(staff as unknown as TokenSubject, stored.id);
   }
@@ -131,7 +146,7 @@ export class AuthService {
   async logout(userId: string): Promise<void> {
     await this.prisma.refreshToken.updateMany({
       where: { userId, revokedAt: null },
-      data: { revokedAt: new Date() },
+      data: { revokedAt: new Date(), revokedReason: 'logout' },
     });
   }
 
@@ -141,6 +156,48 @@ export class AuthService {
     if (!staff) throw new UnauthenticatedException();
     const business = await this.prisma.business.findUnique({ where: { id: staff.businessId } });
     return { user: staff as unknown as Staff, business: business as unknown as Business | null };
+  }
+
+  // --- instrumentation (best-effort; NEVER fails or slows an auth request) --
+
+  /**
+   * Append one otp_request_log row (admin auth-monitor panel) and, at ISSUANCE only and ONLY
+   * when the phone maps to a Business with isTest = true, mirror the plaintext code into
+   * otp_test_codes so the admin reveal works without weakening real users' hashing.
+   *
+   * Privacy: the log stores a MASKED phone (last 4 digits only) and NEVER the code. Every
+   * write is swallowed on failure: instrumentation must never break login.
+   */
+  private async logOtpEvent(
+    phone: string,
+    outcome: 'requested' | 'verified' | 'failed' | 'rate-limited',
+    attempts: number,
+    issued?: { code: string; expiresAt: Date },
+  ): Promise<void> {
+    try {
+      const business = await this.prisma.business.findFirst({
+        where: { phone },
+        select: { id: true, isTest: true },
+      });
+      await this.prisma.otpRequestLog.create({
+        data: {
+          id: uuidv7(),
+          phoneMasked: maskPhone(phone),
+          businessId: business?.id ?? null,
+          outcome,
+          attempts,
+        },
+      });
+      if (issued && business?.isTest) {
+        await this.prisma.otpTestCode.upsert({
+          where: { phone },
+          create: { phone, codePlain: issued.code, expiresAt: issued.expiresAt },
+          update: { codePlain: issued.code, expiresAt: issued.expiresAt },
+        });
+      }
+    } catch (err) {
+      this.logger.warn(`otp instrumentation write failed (${outcome}): ${String(err)}`);
+    }
   }
 
   // --- internals -----------------------------------------------------------
@@ -230,4 +287,11 @@ export class AuthService {
     store.set(key, recent);
     return false;
   }
+}
+
+/** Mask every digit but the last 4, preserving length. Short/empty values mask fully. */
+function maskPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length <= 4) return '*'.repeat(digits.length);
+  return `${'*'.repeat(digits.length - 4)}${digits.slice(-4)}`;
 }

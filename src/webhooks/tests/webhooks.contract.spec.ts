@@ -252,6 +252,13 @@ describe('Webhooks (contract)', () => {
     expect(feed[0].body).toContain('Debtor Dan');
     expect(feed[0].body).toContain('₦5,000');
     expect(feed[0].read).toBe(false);
+
+    // Instrumentation: one webhook_event_log row for the verified delivery.
+    const logs = await prisma.webhookEventLog.findMany({ where: { reference } });
+    expect(logs.length).toBe(1);
+    expect(logs[0].source).toBe('paystack');
+    expect(logs[0].eventType).toBe('charge.success');
+    expect(logs[0].outcome).toBe('ok');
   });
 
   it('re-post the SAME reference -> idempotent (no duplicate Payment, no duplicate Notification)', async () => {
@@ -350,6 +357,8 @@ describe('Webhooks (contract)', () => {
 
     const payments = await prisma.payment.findMany({ where: { reference } });
     expect(payments.length).toBe(0); // rejected before any write
+    // UNVERIFIED deliveries are never logged either (untrusted input stays out of the log).
+    expect(await prisma.webhookEventLog.count({ where: { reference } })).toBe(0);
   });
 
   it('missing signature header -> 401 (never trust an unverified payload)', async () => {
@@ -424,6 +433,13 @@ describe('Webhooks (contract)', () => {
     const spoofed = await prisma.business.findUnique({ where: { id: BIZ_SPOOF } });
     expect(spoofed?.plan).toBe('starter');
     expect(await prisma.subscription.findUnique({ where: { businessId: BIZ_SPOOF } })).toBeNull();
+
+    // Instrumentation: one webhook_event_log row keyed on the STORE transaction id.
+    const logs = await prisma.webhookEventLog.findMany({
+      where: { source: 'iap', reference: `txn-${BOUND_SUB_RECEIPT}`, eventType: 'DID_RENEW' },
+    });
+    expect(logs.length).toBe(1);
+    expect(logs[0].outcome).toBe('ok');
   });
 
   it('BOUND credits-bundle transaction -> idempotent no-op (already credited at verify-receipt time)', async () => {

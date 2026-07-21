@@ -100,6 +100,29 @@ export class WebhooksService {
    * on data.reference. Always 200 for a verified event, even when there is nothing to reconcile.
    */
   async handlePaystack(rawBody: Buffer, body: PaystackEvent, signature?: string): Promise<WebhookAck> {
+    const eventType = body?.event ?? 'unknown';
+    const reference = body?.data?.reference ?? null;
+    try {
+      const ack = await this.processPaystack(rawBody, body, signature);
+      await this.logWebhook('paystack', eventType, reference, ack.processed ? 'ok' : 'ignored', null);
+      return ack;
+    } catch (err) {
+      // Unverified deliveries are NEVER logged (untrusted input); everything else is.
+      if (!(err instanceof UnauthenticatedException)) {
+        await this.logWebhook('paystack', eventType, reference, 'error', {
+          message: String(err),
+          body: body as unknown,
+        });
+      }
+      throw err;
+    }
+  }
+
+  private async processPaystack(
+    rawBody: Buffer,
+    body: PaystackEvent,
+    signature?: string,
+  ): Promise<WebhookAck> {
     if (!signature || !this.paystack.verifySignature(rawBody, signature)) {
       throw new UnauthenticatedException('Invalid Paystack signature');
     }
@@ -198,6 +221,25 @@ export class WebhooksService {
    * out-of-band. Unbound or bundle-bound events are acked and ignored (no state change).
    */
   async handleIap(body: IapEvent): Promise<WebhookAck> {
+    const eventType = body?.notificationType ?? 'unknown';
+    try {
+      const { ack, reference } = await this.processIap(body);
+      await this.logWebhook('iap', eventType, reference, ack.processed ? 'ok' : 'ignored', null);
+      return ack;
+    } catch (err) {
+      // Unverified/malformed deliveries are NEVER logged (untrusted input).
+      if (!(err instanceof UnauthenticatedException)) {
+        await this.logWebhook('iap', eventType, null, 'error', {
+          message: String(err),
+          platform: body?.platform ?? null,
+          productId: body?.productId ?? null,
+        });
+      }
+      throw err;
+    }
+  }
+
+  private async processIap(body: IapEvent): Promise<{ ack: WebhookAck; reference: string | null }> {
     if (!body?.platform || !body?.productId || !body?.receipt) {
       throw new UnauthenticatedException('Malformed IAP notification');
     }
@@ -221,7 +263,7 @@ export class WebhooksService {
       this.logger.warn(
         `IAP notification ignored: no server-side tenant binding for store transaction '${result.transactionId}'`,
       );
-      return { received: true, processed: false };
+      return { ack: { received: true, processed: false }, reference: result.transactionId };
     }
     const businessId = binding.businessId;
 
@@ -230,17 +272,18 @@ export class WebhooksService {
     // Consumable OweMe-credits bundle: the bound transaction already credited the ledger at
     // verify-receipt time; crediting again here would double-apply. Idempotent no-op.
     if (CREDITS_BUNDLE_PRODUCT.test(productId)) {
-      return { received: true, processed: false };
+      return { ack: { received: true, processed: false }, reference: result.transactionId };
     }
 
     // Subscription lifecycle on the BOUND tenant (renewal extends, expiry fails closed).
     const plan = await this.prisma.plan.findFirst({ where: { productId } });
     if (plan) {
       await this.applySubscription(businessId, plan.id as PlanId, body.notificationType);
-      return { received: true, processed: true };
+      return { ack: { received: true, processed: true }, reference: result.transactionId };
     }
 
-    return { received: true, processed: false }; // verified but unknown product
+    // verified but unknown product
+    return { ack: { received: true, processed: false }, reference: result.transactionId };
   }
 
   private async applySubscription(
@@ -274,6 +317,34 @@ export class WebhooksService {
       create: { businessId, planId, entitlementState: 'active', activePlanId: planId, renewalAt },
       update: { planId, entitlementState: 'active', activePlanId: planId, renewalAt },
     });
+  }
+
+  /**
+   * Best-effort webhook_event_log row (admin pay-links / billing panels). Only VERIFIED
+   * deliveries are logged. Never throws: a logging failure must never fail a money path,
+   * and must never turn a 200 ack into a provider retry storm.
+   */
+  private async logWebhook(
+    source: 'paystack' | 'iap',
+    eventType: string,
+    reference: string | null,
+    outcome: 'ok' | 'ignored' | 'error',
+    detail: Record<string, unknown> | null,
+  ): Promise<void> {
+    try {
+      await this.prisma.webhookEventLog.create({
+        data: {
+          id: uuidv7(),
+          source,
+          eventType,
+          reference,
+          outcome,
+          detail: (detail ?? undefined) as never,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`webhook_event_log write failed (${source}/${outcome}): ${String(err)}`);
+    }
   }
 
   /** Insert an app-feed Notification row (kind 'payment'; feed rows were previously never written). */

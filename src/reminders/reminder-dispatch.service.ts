@@ -9,6 +9,7 @@ import {
   uuidv7,
 } from '../common';
 import { CreditLedgerService, CREDIT_WEIGHTS } from '../usage/credit-ledger.service';
+import { SMS_ROUTE_COST_KOBO, UsageEventRecorder } from '../usage/usage-event.recorder';
 
 /** Max due rows processed per tick; keeps a single tick bounded; the next tick drains the rest. */
 const DISPATCH_BATCH_LIMIT = 100;
@@ -65,6 +66,7 @@ export class ReminderDispatchService {
     private readonly prisma: PrismaService,
     private readonly credits: CreditLedgerService,
     @Inject(MESSAGE_SENDER) private readonly sender: MessageSender,
+    private readonly usageEvents: UsageEventRecorder,
   ) {}
 
   /** Cron tick, every minute. Exposed for deterministic invocation from contract specs. */
@@ -147,6 +149,16 @@ export class ReminderDispatchService {
       await this.unclaimToFailed(row, now, REASON_DELIVERY_FAILED);
       return;
     }
+
+    // Instrumentation (best-effort, never fails the dispatch): one usage_events row per
+    // successful metered scheduled send.
+    await this.usageEvents.record({
+      businessId: row.businessId,
+      type: 'send',
+      credits: CREDIT_WEIGHTS.reminderSend,
+      costKoboEstimate: SMS_ROUTE_COST_KOBO,
+      meta: { reminderId: row.id, channel: 'sms', scheduled: true },
+    });
 
     await this.finalizeSent(row, now);
   }

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { UsageController } from './usage.controller';
 import { UsageService } from './usage.service';
 import { CreditLedgerService } from './credit-ledger.service';
+import { UsageEventRecorder } from './usage-event.recorder';
 
 /**
  * Usage / ledger module — owns the ONE unified OweMe-credits ledger (model rev 2).
@@ -15,7 +16,7 @@ import { CreditLedgerService } from './credit-ledger.service';
  */
 @Module({
   controllers: [UsageController],
-  providers: [UsageService, CreditLedgerService],
-  exports: [CreditLedgerService],
+  providers: [UsageService, CreditLedgerService, UsageEventRecorder],
+  exports: [CreditLedgerService, UsageEventRecorder],
 })
 export class UsageModule {}

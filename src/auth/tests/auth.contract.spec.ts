@@ -279,4 +279,132 @@ describe('Auth (contract)', () => {
       expect(dead.status).toBe(401);
     });
   });
+
+  // Admin-surface instrumentation: otp_request_log, otp_test_codes, RefreshToken.revokedReason.
+  describe('admin instrumentation (best-effort, never alters the auth contract)', () => {
+    const TEST_PHONE = '2348030000003';
+    const REAL_PHONE = '2348030000004';
+    const TEST_BIZ = '01912aaa-0000-7000-8000-authinstr001';
+    const REAL_BIZ = '01912aaa-0000-7000-8000-authinstr002';
+
+    const seedBusiness = async (id: string, phone: string, isTest: boolean): Promise<void> => {
+      await prisma.business.upsert({
+        where: { id },
+        create: {
+          id,
+          businessName: 'Instr Traders',
+          ownerName: 'Owner',
+          phone,
+          category: 'Retail',
+          currency: 'NGN (₦)',
+          reminderTone: 'gentle',
+          plan: 'starter',
+          isTest,
+        },
+        update: { phone, isTest },
+      });
+      await prisma.staff.upsert({
+        where: { id: `${id}-staff` },
+        create: {
+          id: `${id}-staff`,
+          businessId: id,
+          name: 'Owner',
+          phone,
+          role: 'owner',
+          active: true,
+        },
+        update: {},
+      });
+    };
+
+    beforeAll(async () => {
+      await seedBusiness(TEST_BIZ, TEST_PHONE, true);
+      await seedBusiness(REAL_BIZ, REAL_PHONE, false);
+    });
+
+    beforeEach(async () => {
+      await prisma.otpRequestLog.deleteMany({});
+      await prisma.otpTestCode.deleteMany({});
+    });
+
+    it('request-otp logs a MASKED-phone otp_request_log row and mirrors the code for TEST businesses only', async () => {
+      const testCode = await requestAndReadCode(TEST_PHONE);
+
+      const log = await prisma.otpRequestLog.findFirst({
+        where: { businessId: TEST_BIZ },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(log).not.toBeNull();
+      expect(log!.outcome).toBe('requested');
+      expect(log!.attempts).toBe(0);
+      // Masked: last 4 digits only, and the full number is NEVER stored.
+      expect(log!.phoneMasked).toBe(`${'*'.repeat(TEST_PHONE.length - 4)}${TEST_PHONE.slice(-4)}`);
+      expect(log!.phoneMasked).not.toBe(TEST_PHONE);
+      expect(JSON.stringify(log)).not.toContain(testCode);
+
+      // Test-flagged business -> the plaintext mirror exists (this is what the admin reveal reads).
+      const mirror = await prisma.otpTestCode.findUnique({ where: { phone: TEST_PHONE } });
+      expect(mirror).not.toBeNull();
+      expect(mirror!.codePlain).toBe(testCode);
+
+      // Real business -> logged, but NEVER mirrored in plaintext.
+      await requestAndReadCode(REAL_PHONE);
+      const realLog = await prisma.otpRequestLog.findFirst({ where: { businessId: REAL_BIZ } });
+      expect(realLog).not.toBeNull();
+      expect(await prisma.otpTestCode.findUnique({ where: { phone: REAL_PHONE } })).toBeNull();
+    });
+
+    it('verify-otp logs failed then verified outcomes and consumes the test-code mirror', async () => {
+      const code = await requestAndReadCode(TEST_PHONE);
+
+      const wrong = await request(app.getHttpServer())
+        .post('/auth/verify-otp')
+        .send({ phone: TEST_PHONE, code: code === '000000' ? '111111' : '000000' });
+      expect(wrong.status).toBe(401);
+      const failed = await prisma.otpRequestLog.findFirst({
+        where: { outcome: 'failed' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(failed).not.toBeNull();
+      expect(failed!.attempts).toBe(1);
+
+      const ok = await request(app.getHttpServer())
+        .post('/auth/verify-otp')
+        .send({ phone: TEST_PHONE, code });
+      expect(ok.status).toBe(200);
+      const verified = await prisma.otpRequestLog.findFirst({
+        where: { outcome: 'verified' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(verified).not.toBeNull();
+      expect(verified!.businessId).toBe(TEST_BIZ);
+      // The mirror is consumed alongside the OTP itself.
+      expect(await prisma.otpTestCode.findUnique({ where: { phone: TEST_PHONE } })).toBeNull();
+    });
+
+    it('stamps RefreshToken.revokedReason on rotation and logout', async () => {
+      const code = await requestAndReadCode(REAL_PHONE);
+      const session = await request(app.getHttpServer())
+        .post('/auth/verify-otp')
+        .send({ phone: REAL_PHONE, code });
+      expect(session.status).toBe(200);
+
+      const rotated = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .send({ refreshToken: session.body.refreshToken as string });
+      expect(rotated.status).toBe(200);
+      const userId = `${REAL_BIZ}-staff`;
+      expect(
+        await prisma.refreshToken.count({ where: { userId, revokedReason: 'rotation' } }),
+      ).toBe(1);
+
+      const logout = await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('Authorization', `Bearer ${rotated.body.accessToken as string}`);
+      expect(logout.status).toBe(204);
+      expect(await prisma.refreshToken.count({ where: { userId, revokedReason: 'logout' } })).toBe(
+        1,
+      );
+    });
+  });
 });

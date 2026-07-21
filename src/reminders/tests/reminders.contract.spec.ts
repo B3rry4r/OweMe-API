@@ -365,6 +365,15 @@ describe('Reminder (contract)', () => {
     expect(typeof res.body.sentAt).toBe('string');
     expect(await creditBalanceNow()).toBe(before - CREDITS_PER_SEND); // re-debited (5 credits) for the sms retry
     expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    // Instrumentation: the metered retry lands a usage_events row.
+    const event = await prisma.usageEvent.findFirst({
+      where: { businessId: BID, type: 'send' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(event).not.toBeNull();
+    expect(event!.credits).toBe(CREDITS_PER_SEND);
+    expect(event!.meta).toMatchObject({ reminderId: R_FAILED, channel: 'sms', retry: true });
   });
 
   it('POST /reminders/:id/retry on a non-failed row -> 422', async () => {
