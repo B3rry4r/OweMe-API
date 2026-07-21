@@ -23,10 +23,10 @@ import { REMINDER_CHANNEL_VALUES, REMINDER_STATUS_VALUES, Role } from '../../sha
  * MESSAGE_SENDER with a spy stub.
  *
  * Seeds a starter-plan tenant (unified credit ledger) + owner/staff + a customer + a debt, and
- * asserts: metered sms send -> 201 sent + 5 credits debited; free channels (call/manual/
- * printable) -> 201 recorded + credits untouched; exhausted credits -> 403 PLAN_REQUIRED
- * with NO sent row persisted; GET status filter + debt/customer join + cursor pagination; retry
- * of a failed row -> 200 sent; auth/validation rejection. Asserts SHAPES + metering, never snapshots.
+ * asserts: immediate sends of ANY channel -> 201 recorded free (manual deeplink sends are
+ * never metered or blocked); scheduled rows -> metered later by the delivery worker; GET
+ * status filter + debt/customer join + cursor pagination; retry of a failed sms row -> 200
+ * sent + 5 credits debited; whatsapp retry -> 422. Asserts SHAPES + metering, never snapshots.
  */
 describe('Reminder (contract)', () => {
   let app: INestApplication;
@@ -57,9 +57,9 @@ describe('Reminder (contract)', () => {
   );
   const DAY = 24 * 60 * 60 * 1000;
 
-  // rev 2: metering runs off the ONE unified "OweMe credits" ledger. An immediate metered
-  // (sms|whatsapp) send debits CREDIT_WEIGHTS.reminderSend (=5) credits; free channels never
-  // debit. Seed/deplete the unified creditLedger directly to drive allowance in these tests.
+  // rev 2: metering runs off the ONE unified "OweMe credits" ledger and applies only to
+  // SERVER dispatches (scheduled worker, sms retry). Immediate creates record manual sends
+  // and are always free. Seed/deplete the unified creditLedger directly in these tests.
   const CREDITS_PER_SEND = CREDIT_WEIGHTS.reminderSend; // 5
 
   const setCredits = (balance: number): Promise<unknown> =>
@@ -198,7 +198,10 @@ describe('Reminder (contract)', () => {
     expect(res.body.error.code).toBe('UNAUTHENTICATED');
   });
 
-  it('POST /reminders channel=sms -> 201 sent; allowance decremented; delivery dispatched', async () => {
+  it('POST /reminders channel=sms (immediate) -> 201 recorded FREE; no debit, no server dispatch', async () => {
+    // Rev 2 canon: an immediate create RECORDS a deeplink send the trader already made
+    // from their own phone. Free and unmetered; server dispatch happens only via the
+    // scheduled worker and retry.
     const before = await creditBalanceNow();
     const id = '01912ddd-0000-7000-8000-remd00post001';
     const res = await request(app.getHttpServer())
@@ -213,11 +216,11 @@ describe('Reminder (contract)', () => {
     expect(res.body.status).toBe('sent');
     expect(typeof res.body.sentAt).toBe('string');
 
-    expect(await creditBalanceNow()).toBe(before - CREDITS_PER_SEND); // metered debit (5 credits)
-    expect(sendSpy).toHaveBeenCalledTimes(1); // dispatched via MESSAGE_SENDER stub
+    expect(await creditBalanceNow()).toBe(before); // manual deeplink sends are free
+    expect(sendSpy).not.toHaveBeenCalled(); // the trader's phone sent it, not the server
   });
 
-  it('POST /reminders channel=manual/call/printable -> 201 recorded; allowance NOT decremented; no dispatch', async () => {
+  it('POST /reminders channel=manual/call/printable -> 201 recorded free; no dispatch', async () => {
     for (const channel of ['manual', 'call', 'printable'] as const) {
       const before = await creditBalanceNow();
       const id = `01912ddd-0000-7000-8000-remd000free${channel.slice(0, 2)}`;
@@ -278,17 +281,17 @@ describe('Reminder (contract)', () => {
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('POST /reminders sms with exhausted allowance -> 403 PLAN_REQUIRED; NO sent row recorded', async () => {
-    await setCredits(0); // out of credits (balance < 5) -> next metered send is rejected
+  it('POST /reminders sms with zero credits -> still 201 recorded (manual sends never blocked)', async () => {
+    await setCredits(0);
     const id = '01912ddd-0000-7000-8000-remd00exha001';
     const res = await request(app.getHttpServer())
       .post('/reminders')
       .set('Authorization', `Bearer ${ownerToken}`)
       .send({ id, debtId: DEBT, channel: 'sms' });
-    expect(res.status).toBe(403);
-    expect(res.body.error.code).toBe('PLAN_REQUIRED');
-    const row = await prisma.reminder.findUnique({ where: { id } });
-    expect(row).toBeNull(); // exhaustion must not persist a sent row
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('sent');
+    expect(await creditBalanceNow()).toBe(0); // still free at zero balance
+    await setCredits(50);
   });
 
   it('GET /reminders?status=sent -> 200 Paginated with debt+customer joined; only sent', async () => {
@@ -370,5 +373,26 @@ describe('Reminder (contract)', () => {
       .set('Authorization', `Bearer ${ownerToken}`);
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('POST /reminders/:id/retry on a failed WHATSAPP row -> 422 (no server WhatsApp API)', async () => {
+    const id = '01912ddd-0000-7000-8000-remdwafail001';
+    await prisma.reminder.create({
+      data: {
+        id,
+        businessId: BID,
+        debtId: DEBT,
+        channel: 'whatsapp',
+        status: 'failed',
+      },
+    });
+    const before = await creditBalanceNow();
+    const res = await request(app.getHttpServer())
+      .post(`/reminders/${id}/retry`)
+      .set('Authorization', `Bearer ${ownerToken}`);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(await creditBalanceNow()).toBe(before); // no debit on the refused retry
+    expect(sendSpy).not.toHaveBeenCalled();
   });
 });

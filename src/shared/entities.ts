@@ -271,14 +271,6 @@ export interface BillingTransaction {
   createdAt: string;
 }
 
-export interface MeterView {
-  used: number;
-  remaining?: number;
-  balance?: number;
-  monthlyGrant: number;
-  periodStart: string;
-}
-
 // Model rev 2: ONE unified "OweMe credits" meter (used/limit) replaces the two old meters.
 export interface UsageResponse {
   credits: {

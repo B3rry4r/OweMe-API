@@ -19,7 +19,7 @@ import {
 /**
  * Staff (team members) service. Tenant-scoped by the JWT businessId. Owner-only surface.
  * Seat usage is derived from the business's plan (Plan.staffSeats: starter 0 / market 1 /
- * business 5 / enterprise -1 unlimited). seatsUsed counts non-owner ACTIVE staff.
+ * business 5 / wholesale 15 / enterprise -1 unlimited). seatsUsed counts non-owner ACTIVE staff.
  */
 @Injectable()
 export class StaffService {

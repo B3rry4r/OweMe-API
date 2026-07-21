@@ -227,7 +227,7 @@ model PayoutAccount {
 // Billing / plans / ledgers
 // ---------------------------------------------------------------------------
 model Plan {
-  id                String  @id // starter|market|business|enterprise
+  id                String  @id // starter|market|business|wholesale|enterprise
   name              String
   pricePerMonth     Int // kobo, 0 = free
   tagline           String
@@ -254,7 +254,7 @@ model Subscription {
 model BillingTransaction {
   id         String   @id
   businessId String
-  kind       String // enum: subscription|messages-bundle|ai-bundle
+  kind       String // enum: subscription|credits-bundle
   productId  String
   label      String
   amount     Int // kobo

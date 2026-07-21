@@ -1,0 +1,382 @@
+{
+  "consumedEndpoints": [
+    {
+      "method": "POST",
+      "path": "/auth/request-otp",
+      "evidence": "OweMe-Mobile/lib/data/session.dart:36"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/verify-otp",
+      "evidence": "OweMe-Mobile/lib/data/session.dart:46"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/logout",
+      "evidence": "OweMe-Mobile/lib/data/session.dart:73"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/refresh",
+      "evidence": "OweMe-Mobile/lib/data/api/api_client.dart:154"
+    },
+    {
+      "method": "POST",
+      "path": "/customers",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:95"
+    },
+    {
+      "method": "DELETE",
+      "path": "/customers/:id",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:127"
+    },
+    {
+      "method": "POST",
+      "path": "/debts",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:178"
+    },
+    {
+      "method": "DELETE",
+      "path": "/debts/:id",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:195"
+    },
+    {
+      "method": "POST",
+      "path": "/debts/:id/restore",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:206"
+    },
+    {
+      "method": "PATCH",
+      "path": "/debts/:id",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:208"
+    },
+    {
+      "method": "POST",
+      "path": "/debts/:id/payments",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:250"
+    },
+    {
+      "method": "POST",
+      "path": "/reminders",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:284"
+    },
+    {
+      "method": "PUT",
+      "path": "/business",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:322"
+    },
+    {
+      "method": "GET",
+      "path": "/sync",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:357"
+    },
+    {
+      "method": "GET",
+      "path": "/business",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:389"
+    },
+    {
+      "method": "GET",
+      "path": "/notifications",
+      "evidence": "OweMe-Mobile/lib/data/sync/sync_service.dart:407"
+    },
+    {
+      "method": "POST",
+      "path": "/debts/:id/pay-link",
+      "evidence": "OweMe-Mobile/lib/data/payments/paystack_links.dart:37"
+    },
+    {
+      "method": "POST",
+      "path": "/voice/parse",
+      "evidence": "OweMe-Mobile/lib/data/voice/voice_parser.dart:103"
+    },
+    {
+      "method": "GET",
+      "path": "/staff",
+      "evidence": "OweMe-Mobile/lib/data/staff/staff_service.dart:88"
+    },
+    {
+      "method": "POST",
+      "path": "/staff",
+      "evidence": "OweMe-Mobile/lib/data/staff/staff_service.dart:96"
+    },
+    {
+      "method": "PATCH",
+      "path": "/staff/:id",
+      "evidence": "OweMe-Mobile/lib/data/staff/staff_service.dart:110"
+    },
+    {
+      "method": "POST",
+      "path": "/billing/verify-receipt",
+      "evidence": "OweMe-Mobile/lib/data/billing/billing_service.dart:165"
+    },
+    {
+      "method": "GET",
+      "path": "/subscription",
+      "evidence": "OweMe-Mobile/lib/data/billing/billing_service.dart:199"
+    },
+    {
+      "method": "GET",
+      "path": "/usage",
+      "evidence": "OweMe-Mobile/lib/data/billing/billing_service.dart:220"
+    },
+    {
+      "method": "GET",
+      "path": "/bvum",
+      "evidence": "OweMe-Mobile/lib/data/billing/billing_service.dart:232"
+    },
+    {
+      "method": "GET",
+      "path": "/billing/history",
+      "evidence": "OweMe-Mobile/lib/data/billing/billing_service.dart:245"
+    },
+    {
+      "method": "GET",
+      "path": "/notification-preferences",
+      "evidence": "OweMe-Mobile/lib/data/notifications/notification_prefs_service.dart:70"
+    },
+    {
+      "method": "PUT",
+      "path": "/notification-preferences",
+      "evidence": "OweMe-Mobile/lib/data/notifications/notification_prefs_service.dart:79"
+    },
+    {
+      "method": "GET",
+      "path": "/banks",
+      "evidence": "OweMe-Mobile/lib/data/payments/payout_service.dart:63"
+    },
+    {
+      "method": "POST",
+      "path": "/payout-account/resolve",
+      "evidence": "OweMe-Mobile/lib/data/payments/payout_service.dart:81"
+    },
+    {
+      "method": "GET",
+      "path": "/payout-account",
+      "evidence": "OweMe-Mobile/lib/data/payments/payout_service.dart:94"
+    },
+    {
+      "method": "PUT",
+      "path": "/payout-account",
+      "evidence": "OweMe-Mobile/lib/data/payments/payout_service.dart:108"
+    }
+  ],
+  "featureAreas": [
+    {
+      "name": "auth",
+      "summary": "Phone plus OTP sign-in (request-otp, verify-otp), JWT access/refresh pair persisted in TokenStore, transparent single-flight refresh-and-retry on 401 with rotation, best-effort server logout, session-expired hook wired to local sign-out.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/session.dart:35",
+        "OweMe-Mobile/lib/data/session.dart:45",
+        "OweMe-Mobile/lib/data/api/api_client.dart:148",
+        "OweMe-Mobile/lib/data/api/token_store.dart:1",
+        "OweMe-Mobile/lib/data/app_services.dart:89",
+        "OweMe-Mobile/lib/screens/onboarding/otp_screen.dart:1"
+      ]
+    },
+    {
+      "name": "debts",
+      "summary": "Offline-first debt ledger: record, edit (amount/note/due date), soft-delete (archive), restore, joined debt views with payment progress and status ranking; local rows marked pending and reconciled with POST/PATCH/DELETE /debts and /debts/:id/restore with If-Match versioning.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:241",
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:338",
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:349",
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:417",
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:139",
+        "OweMe-Mobile/lib/screens/debts/debts_screen.dart:1",
+        "OweMe-Mobile/lib/screens/debts/debt_detail_screen.dart:1",
+        "OweMe-Mobile/lib/screens/record_debt/record_debt_screen.dart:1"
+      ]
+    },
+    {
+      "name": "customers",
+      "summary": "Customer book: add, per-customer aggregate views (owed, worst status, last activity), delete with pendingDelete retention until DELETE /customers/:id propagates, customer detail activity timeline, contact import helpers.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:139",
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:216",
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:382",
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:82",
+        "OweMe-Mobile/lib/data/contacts.dart:1",
+        "OweMe-Mobile/lib/screens/customers/customers_screen.dart:1",
+        "OweMe-Mobile/lib/screens/customers/customer_detail_screen.dart:1"
+      ]
+    },
+    {
+      "name": "payments",
+      "summary": "Record payments against debts with locally minted OWM-xxxxx receipt references (server mints the authoritative reference on sync via POST /debts/:id/payments), undo last payment, recent-payments views feeding receipt pickers.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:267",
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:361",
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:440",
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:241",
+        "OweMe-Mobile/lib/screens/debts/record_payment_screen.dart:1"
+      ]
+    },
+    {
+      "name": "reminders-send-and-schedule",
+      "summary": "Send now or schedule reminders per debt over SMS/WhatsApp (call channel exists in the DB enum); scheduled rows promoted to sent locally by a mock cron; retry of failed reminders re-creates the pay-link; all rows reconciled via POST /reminders with channel, payLinkUrl and scheduledFor.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:473",
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:536",
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:585",
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:275",
+        "OweMe-Mobile/lib/screens/reminders/reminders_screen.dart:1",
+        "OweMe-Mobile/lib/screens/reminders/send_reminder_screen.dart:1"
+      ]
+    },
+    {
+      "name": "reminders-deeplink-sends",
+      "summary": "Immediate sends open the device composer via deeplink: wa.me URL for WhatsApp or an sms: URI with prefilled body including a pay link; falls back to copying the message to the clipboard when no handler opens.",
+      "evidence": [
+        "OweMe-Mobile/lib/screens/reminders/send_reminder_screen.dart:83",
+        "OweMe-Mobile/lib/screens/reminders/send_reminder_screen.dart:84",
+        "OweMe-Mobile/lib/screens/reminders/send_reminder_screen.dart:87",
+        "OweMe-Mobile/lib/screens/reminders/send_reminder_screen.dart:90"
+      ]
+    },
+    {
+      "name": "reminder-templates",
+      "summary": "Reminder templates and tone screen: tone cards, {name}/{amount}/{due} token template with live preview; tone persisted on the business profile (reminderTone) and pushed via PUT /business.",
+      "evidence": [
+        "OweMe-Mobile/lib/screens/settings/templates_screen.dart:28",
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:330"
+      ]
+    },
+    {
+      "name": "pay-links",
+      "summary": "Paystack debtor pay-links: POST /debts/:id/pay-link creates a hosted link keyed off the debt syncId, embedded in reminder messages; deterministic local stub URL fallback when offline or unsynced; webhook reconciliation seam exists but is an empty stub.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/payments/paystack_links.dart:22",
+        "OweMe-Mobile/lib/data/payments/paystack_links.dart:37",
+        "OweMe-Mobile/lib/data/payments/paystack_links.dart:49"
+      ]
+    },
+    {
+      "name": "sync",
+      "summary": "Offline-first delta sync: PUSH pending rows in FK-safe order (customers, debts, payments, reminders, business) with idempotent creates, If-Match versions and 409 last-writer-wins conflict resolution, then PULL GET /sync?since=cursor with upserts and tombstones, business refresh and cursor-paged GET /notifications; pending-count stream for the Backup and sync screen.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:52",
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:353",
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:430",
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:908",
+        "OweMe-Mobile/lib/data/sync/sync_cursor.dart:1",
+        "OweMe-Mobile/lib/data/sync/sync_mapper.dart:1"
+      ]
+    },
+    {
+      "name": "billing-iap",
+      "summary": "In-app-purchase billing (StoreKit 2 / Play Billing via in_app_purchase): plan subscriptions and consumable credit bundles, server-side receipt verification via POST /billing/verify-receipt, entitlement state (pending/active/gracePeriod/expired) from GET /subscription as sole authority, restore purchases, billing history from GET /billing/history, billingMode flag seam.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/billing/billing_service.dart:110",
+        "OweMe-Mobile/lib/data/billing/billing_service.dart:162",
+        "OweMe-Mobile/lib/data/billing/billing_service.dart:197",
+        "OweMe-Mobile/lib/data/billing/billing_service.dart:241",
+        "OweMe-Mobile/lib/data/billing/billing_api.dart:26",
+        "OweMe-Mobile/lib/screens/settings/subscription_screens.dart:1108"
+      ]
+    },
+    {
+      "name": "credits-usage-meter",
+      "summary": "Unified OweMe-credits meter (model rev 2, one pool): GET /usage credits {used, balance, monthlyGrant, periodStart}, cached in BillingService.usage, rendered on the Usage screen and the subscription summary row; credit-bundle purchases echo the new balance and trigger a meter re-read.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/billing/billing_service.dart:219",
+        "OweMe-Mobile/lib/data/billing/billing_api.dart:81",
+        "OweMe-Mobile/lib/data/billing/billing_service.dart:187",
+        "OweMe-Mobile/lib/screens/settings/subscription_screens.dart:743"
+      ]
+    },
+    {
+      "name": "bvum-enforcement",
+      "summary": "Business-value-under-management: GET /bvum (value, ceiling, recommendedPlan) powers the scale screen; instant client-side enforcement mirrors the server rule when recording a debt (new debt pushing BVUM past the plan ceiling is blocked with an upgrade sheet; collecting existing debt never blocked).",
+      "evidence": [
+        "OweMe-Mobile/lib/data/billing/billing_service.dart:231",
+        "OweMe-Mobile/lib/data/billing/billing_api.dart:95",
+        "OweMe-Mobile/lib/screens/record_debt/record_debt_screen.dart:281",
+        "OweMe-Mobile/lib/screens/record_debt/record_debt_screen.dart:314",
+        "OweMe-Mobile/lib/screens/settings/subscription_screens.dart:323"
+      ]
+    },
+    {
+      "name": "payout-account",
+      "summary": "Owner-only payout destination for pay-link settlements: Paystack-proxied bank list (GET /banks), NUBAN account-name resolve (POST /payout-account/resolve), read and save the payout account (GET/PUT /payout-account); backend derives the Paystack subaccount.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/payments/payout_service.dart:62",
+        "OweMe-Mobile/lib/data/payments/payout_service.dart:77",
+        "OweMe-Mobile/lib/data/payments/payout_service.dart:93",
+        "OweMe-Mobile/lib/data/payments/payout_service.dart:103",
+        "OweMe-Mobile/lib/screens/settings/payout_account_screen.dart:1"
+      ]
+    },
+    {
+      "name": "voice-parse",
+      "summary": "Voice-to-debt: on-device speech capture to transcript, backend AI parse via POST /voice/parse (debits 1 AI credit; PlanRequired flips the out-of-credits gate), cheap on-device heuristic fallback offline/web, plus an offline voice-note queue that creates pending-parse debts reconciled on sync.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/voice/voice_parser.dart:60",
+        "OweMe-Mobile/lib/data/voice/voice_parser.dart:103",
+        "OweMe-Mobile/lib/data/voice/voice_parser.dart:294",
+        "OweMe-Mobile/lib/data/voice/voice_note_queue.dart:17",
+        "OweMe-Mobile/lib/data/voice/speech_capture.dart:1"
+      ]
+    },
+    {
+      "name": "insights",
+      "summary": "AI insight slot on the dashboard: shipped as a deliberate unpowered placeholder that renders nothing (SizedBox.shrink) until the backend insight surface exists; no endpoint consumed yet.",
+      "evidence": [
+        "OweMe-Mobile/lib/screens/dashboard/dashboard_screen.dart:257",
+        "OweMe-Mobile/lib/screens/dashboard/dashboard_screen.dart:263"
+      ]
+    },
+    {
+      "name": "notifications",
+      "summary": "In-app notification feed: local rows written on payments/reminders, server rows pulled via cursor-paged GET /notifications during sync, unread badge stream, mark-all-read; plus owner push preferences (payments/overdue/delivery/weekly) via GET/PUT /notification-preferences.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:679",
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:686",
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:399",
+        "OweMe-Mobile/lib/data/notifications/notification_prefs_service.dart:60",
+        "OweMe-Mobile/lib/screens/misc/notifications_screen.dart:1"
+      ]
+    },
+    {
+      "name": "staff",
+      "summary": "Staff and roles (coarse owner|staff per supersede S-4): roster with plan seat usage from GET /staff, invite by phone via POST /staff (403 PLAN_REQUIRED routes to upgrade), activate/deactivate via PATCH /staff/:id (owner protected server-side).",
+      "evidence": [
+        "OweMe-Mobile/lib/data/staff/staff_service.dart:87",
+        "OweMe-Mobile/lib/data/staff/staff_service.dart:95",
+        "OweMe-Mobile/lib/data/staff/staff_service.dart:109",
+        "OweMe-Mobile/lib/screens/settings/staff_screens.dart:1"
+      ]
+    },
+    {
+      "name": "printable-receipt-statement",
+      "summary": "Printable payment receipt screen (brand header, receipt reference, share on WhatsApp, download PDF and print actions); all three actions are currently placeholder snackbars, no backend or file/print layer consumed.",
+      "evidence": [
+        "OweMe-Mobile/lib/screens/receipt/receipt_screen.dart:13",
+        "OweMe-Mobile/lib/screens/receipt/receipt_screen.dart:91",
+        "OweMe-Mobile/lib/screens/receipt/receipt_screen.dart:104",
+        "OweMe-Mobile/lib/screens/receipt/receipt_screen.dart:113"
+      ]
+    },
+    {
+      "name": "business-profile",
+      "summary": "Business profile (name, owner, phone, category, currency, reminder tone, plan, paystackSubaccount): onboarding setup and settings edit saved locally then upserted every sync cycle via PUT /business with If-Match, refreshed from GET /business on pull.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:30",
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:317",
+        "OweMe-Mobile/lib/data/sync/sync_service.dart:387",
+        "OweMe-Mobile/lib/screens/settings/business_profile_screen.dart:1",
+        "OweMe-Mobile/lib/screens/onboarding/setup_screen.dart:1"
+      ]
+    },
+    {
+      "name": "dashboard-and-activity",
+      "summary": "Dashboard aggregates computed locally from the drift DB (outstanding total, owing customers, recovered this month, due today, overdue) plus a merged activity feed and search; no dedicated backend endpoint, derives entirely from synced rows.",
+      "evidence": [
+        "OweMe-Mobile/lib/data/repos/app_repository.dart:711",
+        "OweMe-Mobile/lib/screens/dashboard/dashboard_screen.dart:1",
+        "OweMe-Mobile/lib/screens/misc/activity_screen.dart:1",
+        "OweMe-Mobile/lib/screens/misc/search_screen.dart:1"
+      ]
+    }
+  ]
+}

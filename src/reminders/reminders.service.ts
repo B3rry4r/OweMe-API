@@ -19,8 +19,12 @@ import {
 } from '../common';
 import { CreditLedgerService, CREDIT_WEIGHTS } from '../usage/credit-ledger.service';
 
-/** Channels metered against the unified OweMe-credits ledger (call/manual/printable are free). */
-const METERED_CHANNELS: ReadonlySet<ReminderChannel> = new Set<ReminderChannel>(['sms', 'whatsapp']);
+/**
+ * Channels the SERVER can dispatch and therefore meter. Only sms today: there is no
+ * server-side WhatsApp API. Metering applies to server dispatches (scheduled worker,
+ * retry), never to immediate records of manual deeplink sends, which are free.
+ */
+const SERVER_DISPATCH_CHANNELS: ReadonlySet<ReminderChannel> = new Set<ReminderChannel>(['sms']);
 
 type CustomerStub = { id: string; name: string; phone: string };
 
@@ -47,12 +51,14 @@ type ReminderRowWithJoins = ReminderRow & {
  * Reminders service. Tenant-scoped by the JWT businessId (owner|staff). Owns the actual
  * scheduled/sent/failed Reminder rows + (stubbed) delivery via the MESSAGE_SENDER provider.
  *
- * Metering (conventions §Metering / §Reminder engine):
- *   - sms|whatsapp are metered — an IMMEDIATE send debits the SendAllowanceLedger BEFORE the
- *     row is recorded (exhaustion -> 403 PLAN_REQUIRED, no sent row persisted).
- *   - call|manual|printable are recorded-only + FREE (never touch the ledger).
- * A future scheduledFor records a 'scheduled' row and does NOT meter/send yet (the delivery
- * worker meters at dispatch time; it MAY ship as a stub). Idempotent on the client-minted id.
+ * Metering (model rev 2, owner canon):
+ *   - IMMEDIATE creates are RECORDS of sends the trader made from their own phone via
+ *     deeplink (or call/manual/printable history). They are FREE and unmetered: no debit,
+ *     no server dispatch. The app composes and sends the message itself.
+ *   - Server dispatch is what meters (5 unified credits per send): the scheduled delivery
+ *     worker (ReminderDispatchService) and POST /reminders/:id/retry, sms only.
+ * A future scheduledFor records a 'scheduled' row; the delivery worker meters and sends at
+ * dispatch time. Idempotent on the client-minted id.
  *
  * The derived reminder-SCHEDULE card (-3/due/+3/+7) is owned by the Debt module, not here.
  */
@@ -93,9 +99,9 @@ export class RemindersService {
 
   /**
    * POST /reminders — records reminder history. Idempotent on the client-minted id (a re-seen
-   * id returns the existing row, rendered 200). A future scheduledFor -> 'scheduled' (no meter/
-   * send). Otherwise an immediate send: metered channels debit the allowance + dispatch via the
-   * MESSAGE_SENDER stub -> 'sent'; free channels (call/manual/printable) are recorded 'sent'.
+   * id returns the existing row, rendered 200). A future scheduledFor -> 'scheduled' (the
+   * delivery worker meters + dispatches later). Otherwise an immediate create records a send
+   * the trader already made themselves (deeplink/call/manual/printable): free, no dispatch.
    */
   async create(
     businessId: string,
@@ -123,19 +129,12 @@ export class RemindersService {
     let sentAt: Date | null = null;
 
     if (isFuture) {
-      // Scheduled for later — recorded only; the (stubbed) delivery worker meters + sends at dispatch.
+      // Scheduled for later: recorded only; the delivery worker meters + sends at dispatch.
       status = 'scheduled';
     } else {
-      // Immediate. Metered channels debit BEFORE recording (exhaustion -> 403, no row persisted).
-      if (METERED_CHANNELS.has(channel)) {
-        await this.credits.debitCredits(businessId, CREDIT_WEIGHTS.reminderSend, 'reminder-send');
-        await this.sender.send({
-          phone: (debt as unknown as { customer: CustomerStub }).customer.phone,
-          message: dto.message ?? defaultMessage(),
-          channel: channel as 'sms' | 'whatsapp',
-        });
-      }
-      // call/manual/printable are recorded-only + FREE (no debit, no delivery contract).
+      // Immediate: a RECORD of a send the trader already made from their own phone
+      // (deeplink sms/whatsapp, call, manual, printable). Free and unmetered, no server
+      // dispatch: the message left the trader's device before this request arrived.
       status = 'sent';
       sentAt = new Date();
     }
@@ -158,9 +157,10 @@ export class RemindersService {
   }
 
   /**
-   * POST /reminders/:id/retry — failed rows only. Re-attempts delivery: metered channels debit
-   * the allowance again + re-dispatch via MESSAGE_SENDER, then mark the row 'sent' (sentAt=now).
-   * Non-failed rows -> 422. Exhausted allowance -> 403 PLAN_REQUIRED (row stays failed).
+   * POST /reminders/:id/retry — failed rows only, a SERVER re-dispatch: sms debits 5 unified
+   * credits + re-sends via MESSAGE_SENDER, then marks the row 'sent' (sentAt=now). whatsapp
+   * has no server API, so retrying it -> 422 (send it manually from the app instead).
+   * Non-failed rows -> 422. Exhausted credits -> 403 PLAN_REQUIRED (row stays failed).
    */
   async retry(businessId: string, id: string): Promise<Reminder> {
     const row = (await this.prisma.reminder.findFirst({
@@ -175,12 +175,17 @@ export class RemindersService {
     }
 
     const channel = row.channel as ReminderChannel;
-    if (METERED_CHANNELS.has(channel)) {
+    if (channel === 'whatsapp') {
+      throw new ValidationException(
+        'WhatsApp reminders cannot be re-sent from the server; send it from the app instead',
+      );
+    }
+    if (SERVER_DISPATCH_CHANNELS.has(channel)) {
       await this.credits.debitCredits(businessId, CREDIT_WEIGHTS.reminderSend, 'reminder-send');
       await this.sender.send({
         phone: row.debt.customer.phone,
         message: row.message ?? defaultMessage(),
-        channel: channel as 'sms' | 'whatsapp',
+        channel: 'sms',
       });
     }
 

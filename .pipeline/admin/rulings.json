@@ -1,0 +1,72 @@
+{
+  "ruledAt": "2026-07-20",
+  "ruledBy": "owner (Excel), via AskUserQuestion in the orchestrating session",
+  "preScope": {
+    "reminderDeliveryWorker": {
+      "ruling": "build-now",
+      "note": "Owner: build the real scheduler + delivery worker BEFORE dashboard wiring, as a fenced backend maintenance pass outside the admin namespace. Reminders monitor then observes real dispatches."
+    },
+    "liveBugFixes": {
+      "ruling": "fix-all-now",
+      "items": [
+        "app: reminder message embeds stub pay link built from local debt id; must use the real backend pay-link URL",
+        "app: demo seed (seed=true) still populates 18 fake synced records in the wired app; disable for real builds",
+        "backend: Paystack webhook lacks overpayment guard and pays archived debts",
+        "backend: IAP webhook trusts businessId from unsigned request body",
+        "backend: Notification rows are never created by any code path (dead feed); create on payment-received and reminder-sent at minimum",
+        "backend: Debt.lastReminderAt never written; write on dispatch",
+        "backend: comments claiming insight cost 5 credits corrected to the code truth (4); voice debit uses CREDIT_WEIGHTS constant"
+      ],
+      "note": "Backend fixes are ordinary maintenance on protected surface, explicitly owner-authorized, gated by the full isolated contract suite. The protected registry must be re-frozen after this pass and BEFORE the regression baseline is generated."
+    }
+  },
+  "unsure": [
+    {
+      "needIds": ["business-detail-need-3", "credits-need-2", "ai-usage-need-1", "ai-usage-need-2", "ai-usage-need-3", "reminders-need-1"],
+      "ruling": "greenlight-via-event-tables",
+      "note": "Owner approved additive event tables. NEW append-only UsageEvent table (businessId, type send|voiceParse|insight, credits, costKoboEstimate, createdAt, meta) written at debit time; powers per-type burn, AI stats, send stats."
+    },
+    {
+      "needIds": ["auth-monitor-need-1", "auth-monitor-need-2", "auth-monitor-need-3"],
+      "ruling": "greenlight-via-event-tables",
+      "note": "NEW append-only OtpRequestLog table (phoneMasked, businessId nullable, outcome requested|delivered-unknown|verified|failed|rate-limited, attempts, createdAt). OtpCode consumable semantics untouched. Delivery outcome recorded as far as the provider reports it; otherwise unknown, displayed honestly."
+    },
+    {
+      "needIds": ["payouts-need-2"],
+      "ruling": "partial-honest-empty",
+      "note": "Account/setup counts wire from PayoutAccount rows. Settlement figures have no source (provider-side): those stat cards ship HONEST-EMPTY until a settlement feed exists."
+    },
+    {
+      "needIds": ["admins-need-3"],
+      "ruling": "replace-invite-with-create",
+      "note": "No email provider exists and none is wanted. Superadmin CREATES an admin with a temporary password shown once; forced password change on first login. Invite-email copy on the screen is CUT/replaced at wiring."
+    },
+    {
+      "needIds": ["ai-usage-need-4"],
+      "ruling": "metadata-only",
+      "note": "Transcripts are NEVER stored (privacy-positive status quo preserved). Recent-parses panel shows time, business, outcome, credits only; transcript column removed at wiring."
+    }
+  ],
+  "orphans": [
+    {
+      "needId": "reminders-need-3",
+      "ruling": "greenlight",
+      "note": "SMS route cost series becomes feasible via UsageEvent.costKoboEstimate recorded per send; wire to that. No provider-billing integration implied."
+    }
+  ],
+  "gaps": [
+    { "gapId": "gap-1", "ruling": "add-to-scope", "note": "Session security panel on auth-monitor: refresh chains, reuse-detection revocations, logout revocations." },
+    { "gapId": "gap-2", "ruling": "add-to-scope", "note": "IAP entitlement lifecycle panel on billing: store-driven downgrades/expiry/grace transitions, from an additive entitlement-event log or BillingTransaction sweep." },
+    { "gapId": "gap-3", "ruling": "ignore", "note": "Notification feed stays out of dashboard scope; backend fix creates rows for the APP's feed, which is enough for now." },
+    { "gapId": "gap-4", "ruling": "add-to-scope", "note": "Sync health panel: cursors, tombstone coverage, payment hard-delete limitation surfaced for support." },
+    { "gapId": "gap-5", "ruling": "add-to-scope", "note": "Business suspension lifecycle: additive status column, admin suspend/unsuspend endpoints (superadmin), suspension blocks new debt creation only (collection never blocked, mirroring BVUM philosophy). The businesses screen's 'paused' filter then reflects reality." }
+  ],
+  "surfaces": {
+    "bulkRuling": "accept-triage-recommendations",
+    "note": "All 85 WIRE and 41 HONEST-EMPTY recommendations accepted as recommended, with the UNSURE rulings above overriding where they conflict (e.g. transcript column). The 4 CUT surfaces accepted: login-surf-2 (personal email placeholder), reminders-surf-12 (route pricing narrative), admins-surf-9 (invite-sent notice), admins-surf-12 (phone-OTP claim). CUT items align with replace-invite-with-create."
+  },
+  "defectHandoff": {
+    "ruling": "ship-with-known-defects",
+    "note": "The 21 items are copy/period hardcodes and styling nits that wiring inherently replaces (live periods, live admin identity, role gating on the admins screen at wiring). None block. Wiring agents receive the list and clear what falls in their screen's scope."
+  }
+}

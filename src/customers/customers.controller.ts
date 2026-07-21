@@ -28,7 +28,7 @@ import { CustomersService } from './customers.service';
  *   POST   /customers            -> 201 Customer (200 + existing when idempotent).  owner|staff
  *   DELETE /customers/:id        -> Customer; cascade soft-archives debts.          OWNER-only
  *   GET    /customers/:id/activity -> ActivityItem[] (payments+debts+reminders).    owner|staff
- *   GET    /customers/:id/risk   -> 501 scaffold (debits 5 AI credits when live).   owner|staff
+ *   GET    /customers/:id/risk   -> 501 scaffold (debits 4 AI credits when live).   owner|staff
  */
 @Controller('customers')
 export class CustomersController {
@@ -76,7 +76,7 @@ export class CustomersController {
   @Get(':id/risk')
   @Roles('owner', 'staff')
   risk(): never {
-    // 501 scaffold (sourceScreens: []). When live: debits 5 AI credits behind LlmProvider.
+    // 501 scaffold (sourceScreens: []). When live: debits 4 AI credits (CREDIT_WEIGHTS.insightOrRisk) behind LlmProvider.
     throw new HttpException('Customer risk scoring is not implemented yet', 501);
   }
 }

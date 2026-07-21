@@ -1,0 +1,119 @@
+{
+  "screenId": "credits",
+  "route": "/credits",
+  "needs": [
+    {
+      "id": "credits-need-1",
+      "kind": "read",
+      "summary": "Platform-wide monthly credit summary: total credits granted this month across all active businesses, plus the month label the screen is scoped to.",
+      "entities": ["CreditGrant", "Business"],
+      "fields": ["grantedThisMonth", "monthLabel"],
+      "filters/actions": "scoped to a calendar month (current month by default)",
+      "adminRole": "both"
+    },
+    {
+      "id": "credits-need-2",
+      "kind": "read",
+      "summary": "Credit burn aggregated by action type for the month: event counts and credits-per-event for sends, voice parses, and AI insights. Totals, per-type credit sums, and share percentages are derived client-side from events * creditsPerEvent.",
+      "entities": ["CreditBurnEvent"],
+      "fields": ["type", "label", "creditsPerEvent", "events"],
+      "filters/actions": "grouped by type (sends|voice|insights), scoped to month",
+      "adminRole": "both"
+    },
+    {
+      "id": "credits-need-3",
+      "kind": "read",
+      "summary": "Heaviest credit users: per-business rows with plan, monthly grant (with enterprise fair-use flag), credits used, and top-up bundles bought this month against the 2-per-month cap.",
+      "entities": ["Business", "Plan", "CreditBalance", "BundlePurchase"],
+      "fields": ["id", "business (name)", "plan", "grant", "fairUse", "used", "bundlesThisMonth"],
+      "filters/actions": "filter by plan (all|starter|market|business|wholesale|enterprise); sorted by used desc; month-scoped",
+      "adminRole": "both"
+    },
+    {
+      "id": "credits-need-4",
+      "kind": "read",
+      "summary": "Bundle purchase history for the month: each top-up purchase with timestamp, purchasing business, SKU, credits granted, and price in integer kobo. Screen derives total bundle revenue and purchase count from this list.",
+      "entities": ["BundlePurchase", "Business"],
+      "fields": ["id", "purchasedAt", "business (name)", "sku", "credits", "priceKobo"],
+      "filters/actions": "month-scoped; sorted by purchasedAt desc",
+      "adminRole": "both"
+    },
+    {
+      "id": "credits-need-5",
+      "kind": "read",
+      "summary": "Credits configuration constants the screen currently hardcodes or reads from fixture comments: bundle cap per business per month (2), per-event credit costs (send 5, voice 1, insight 4), bundle SKU catalog with prices, and per-plan monthly grants. Needed so the dashboard reflects live pricing rather than baked-in constants.",
+      "entities": ["CreditConfig", "BundleSku", "Plan"],
+      "fields": ["bundleCapPerMonth", "creditsPerEvent (by type)", "sku", "credits", "priceKobo", "monthlyGrant (by plan)", "fairUse policy"],
+      "filters/actions": "static config read",
+      "adminRole": "both"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "credits-surf-1",
+      "surface": "Page header subtitle with month label ('Unified OweMe credits across all businesses, July 2026')",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:197-200 subtitle interpolates monthLabel destructured from creditsDemoData (page.tsx:78-79, lib/fixtures/credits.ts:51)"
+    },
+    {
+      "id": "credits-surf-2",
+      "surface": "StatCard 'Credits granted this month'",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:203-207 renders grantedThisMonth from creditsDemoData (lib/fixtures/credits.ts:52)"
+    },
+    {
+      "id": "credits-surf-3",
+      "surface": "StatCard 'Credits burned' with percent-of-granted sub",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:208-213 value from burnTotals computed over fixture burn array (page.tsx:81-98, lib/fixtures/credits.ts:53-72)"
+    },
+    {
+      "id": "credits-surf-4",
+      "surface": "StatCard 'Sends share of burn' with voice/insights shares",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:214-218 shares derived in burnTotals memo from fixture burn rows (page.tsx:87-97)"
+    },
+    {
+      "id": "credits-surf-5",
+      "surface": "StatCard 'Bundle revenue this month' with purchase count",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:219-224 bundleRevenueKobo summed from fixture bundlePurchases (page.tsx:100-103, lib/fixtures/credits.ts:183-248)"
+    },
+    {
+      "id": "credits-surf-6",
+      "surface": "'Burn by type' BarList",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:233-239 BarList items mapped from burnTotals.byType, sourced from fixture burn array"
+    },
+    {
+      "id": "credits-surf-7",
+      "surface": "'Filter by plan' Select on Heaviest users card",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:247-252 controlled via useState planFilter (page.tsx:76) and filters only the local fixture list (page.tsx:105-111); functional but mutates local state only"
+    },
+    {
+      "id": "credits-surf-8",
+      "surface": "'Heaviest users' DataTable (business, plan badge, grant with fair-use tag, used, usage meter, bundle cap badge)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:255-260 rows = filteredHeavyUsers derived from creditsDemoData.heavyUsers (lib/fixtures/credits.ts:73-182)"
+    },
+    {
+      "id": "credits-surf-9",
+      "surface": "Heaviest users empty-state message ('No businesses on this plan in the current heavy-user list.')",
+      "liveness": "static",
+      "evidence": "page.tsx:262-264 hardcoded copy shown when the filtered list is empty"
+    },
+    {
+      "id": "credits-surf-10",
+      "surface": "'Bundle purchases' DataTable (time, business, SKU badge, credits, price)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:274-278 rows = sortedPurchases sorted copy of fixture bundlePurchases (page.tsx:113-119)"
+    },
+    {
+      "id": "credits-surf-11",
+      "surface": "Card titles, column headers, and stat labels (e.g. 'Burn by type', 'Grant', 'Used')",
+      "liveness": "static",
+      "evidence": "page.tsx:121-193 column header strings and page.tsx:228-231,242-244,269-272 card titles are local literals meant to stay local"
+    }
+  ]
+}

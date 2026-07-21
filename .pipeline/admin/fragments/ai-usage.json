@@ -1,0 +1,80 @@
+{
+  "screenId": "ai-usage",
+  "route": "/ai-usage",
+  "needs": [
+    {
+      "id": "ai-usage-need-1",
+      "kind": "read",
+      "summary": "Monthly AI usage headline stats: total voice parses, split into on-device (free) vs fallback-model parses, plus estimated upstream model spend for the month in integer kobo. The dashboard currently derives fallback counts client-side from per-business onDevicePct; a real backend should return real counts per execution mode.",
+      "entities": ["VoiceParseEvent", "AiInsightEvent", "PlatformCostEstimate"],
+      "fields": ["parsesTotal", "onDeviceParses", "fallbackParses", "onDeviceSharePct", "modelSpendEstimateKobo", "periodMonth"],
+      "filters/actions": "Scoped to current calendar month, across all businesses",
+      "adminRole": "both"
+    },
+    {
+      "id": "ai-usage-need-2",
+      "kind": "read",
+      "summary": "Weekly voice-parse volume time series for the trailing 12 weeks, feeding the sparkline and its peak-week caption.",
+      "entities": ["VoiceParseEvent"],
+      "fields": ["weekStart", "parses"],
+      "filters/actions": "Aggregated per week, trailing 12 weeks, all businesses, all execution modes, ordered ascending by weekStart; peak week is computed client-side",
+      "adminRole": "both"
+    },
+    {
+      "id": "ai-usage-need-3",
+      "kind": "read",
+      "summary": "Per-business AI usage rollup for the month: business identity and plan tier, voice parse count, share of parses handled on-device (percent 0-100), AI insight count, and total credits debited (fallback parses at 1 credit plus insights at 4 credits, per the unified OweMe credit ladder).",
+      "entities": ["Business", "VoiceParseEvent", "AiInsightEvent", "CreditLedger"],
+      "fields": ["businessId", "businessName", "plan", "parses", "onDevicePct", "insights", "creditsDebited"],
+      "filters/actions": "Filter by plan (all|starter|market|business|wholesale|enterprise, the rev 2 five-tier ladder); sorted by parses descending; scoped to current month; admin-table pagination per conventions ({ data, page, total }) once row counts grow",
+      "adminRole": "both"
+    },
+    {
+      "id": "ai-usage-need-4",
+      "kind": "read",
+      "summary": "Recent fallback-model parse log: timestamp, owning business name, anonymised transcript snippet (customer names reduced to initials, anonymisation is a server-side obligation before the payload reaches the admin surface), outcome parsed|failed, and credits charged (1 when parsed, 0 when failed since failed parses are not charged).",
+      "entities": ["VoiceParseEvent", "Business", "CreditLedger"],
+      "fields": ["eventId", "at", "businessId", "businessName", "transcriptAnonymised", "outcome", "creditsCharged"],
+      "filters/actions": "Fallback execution mode only; most recent first; small window (screen shows 10 rows)",
+      "adminRole": "both"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "ai-usage-surf-1",
+      "surface": "Stat row: 'Voice parses this month', 'Handled free on-device', 'Fallback model parses', 'Model spend estimate' StatCards",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/ai-usage/page.tsx:29-40,169-193 totals computed at module scope from aiUsageDemoData.byBusiness and modelSpendEstimateKobo (lib/fixtures/aiUsage.ts:49-50) and rendered as live monthly figures"
+    },
+    {
+      "id": "ai-usage-surf-2",
+      "surface": "'Parses per week' sparkline with peak-week subtitle and first/last week-of labels",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/ai-usage/page.tsx:159-160,196-208 Sparkline data mapped from aiUsageDemoData.weeklyParses fixture (lib/fixtures/aiUsage.ts:51-64, hardcoded weeks 2026-04-27 through 2026-07-13)"
+    },
+    {
+      "id": "ai-usage-surf-3",
+      "surface": "'By business' DataTable (business + plan badge, parses, on-device Meter, insights, credits debited)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/ai-usage/page.tsx:155-157,222-226 rows filtered/sorted from aiUsageDemoData.byBusiness fixture (lib/fixtures/aiUsage.ts:65-192, 14 hardcoded rows) via businessColumns (page.tsx:66-112)"
+    },
+    {
+      "id": "ai-usage-surf-4",
+      "surface": "'Filter by plan' Select in the By business card header",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/ai-usage/page.tsx:153,214-219 controlled Select mutates only local useState planFilter, which re-filters the fixture array client-side at page.tsx:155-156; no request leaves the page"
+    },
+    {
+      "id": "ai-usage-surf-5",
+      "surface": "'Recent fallback parses' DataTable (time, business, anonymised transcript, outcome badge, credits)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/ai-usage/page.tsx:229-238 rows come directly from aiUsageDemoData.recentFallbacks fixture (lib/fixtures/aiUsage.ts:193-274, 10 hardcoded events) via fallbackColumns (page.tsx:114-150)"
+    },
+    {
+      "id": "ai-usage-surf-6",
+      "surface": "PageHeader title and subtitle, SectionCard subtitles, StatCard sub-captions (help copy)",
+      "liveness": "static",
+      "evidence": "app/(shell)/ai-usage/page.tsx:164-167,198,212,231 label and help copy meant to stay local; the subtitle hardcodes the period 'July 2026' (line 166), flagged as an anomaly since a live screen must derive it"
+    }
+  ]
+}

@@ -12,7 +12,7 @@ import { Public } from '../common';
 import { WebhooksService, WebhookAck } from './webhooks.service';
 
 /**
- * Inbound provider webhooks. BOTH routes are @Public — they bypass the global JwtAuthGuard
+ * Inbound provider webhooks. BOTH routes are @Public: they bypass the global JwtAuthGuard
  * (there is no user JWT on a provider callback) and carry NO @Roles. The provider signature is
  * the sole trust boundary, enforced inside the service (invalid -> 401 via the error envelope).
  *

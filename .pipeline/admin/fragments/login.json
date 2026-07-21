@@ -1,0 +1,56 @@
+{
+  "screenId": "login",
+  "route": "/login",
+  "needs": [
+    {
+      "id": "login-need-1",
+      "kind": "action",
+      "summary": "Authenticate an admin with email + password and establish an admin session. The form collects email and password, shows a submitting state, needs a displayable failure message for the inline error slot, and on success navigates to the dashboard root.",
+      "entities": ["AdminUser"],
+      "fields": ["email", "password"],
+      "filters/actions": "credential verification against AdminUser by email; on success issue admin-scoped session credentials, on failure return an error message renderable in the error banner; per conventions this is local credential login with distinct admin token config and no 2FA in v1",
+      "adminRole": "both"
+    },
+    {
+      "id": "login-need-2",
+      "kind": "read",
+      "summary": "Read the authenticated admin's own identity (a self/me read in entity terms). The screen already renders identity-shaped fixture data: adminAccountDemoData.email as the email input placeholder and adminAccountDemoData.org in the restricted-access footer copy; the fixture also models name and role.",
+      "entities": ["AdminUser"],
+      "fields": ["name", "email", "role", "org"],
+      "filters/actions": "self only (current authenticated admin); role is one of superadmin or support per the conventions matrix",
+      "adminRole": "both"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "login-surf-1",
+      "surface": "Sign-in form: controlled email and password inputs, submit button with spinner, submit handler",
+      "liveness": "mock-fixture",
+      "evidence": "app/login/page.tsx:97-99: handleSubmit calls no API; window.setTimeout(() => router.push(\"/\"), 900) fakes a sign-in for any non-empty credentials (local-state-only action, so mock-fixture, not wired)"
+    },
+    {
+      "id": "login-surf-2",
+      "surface": "Email input placeholder text",
+      "liveness": "mock-fixture",
+      "evidence": "app/login/page.tsx:125: placeholder={adminAccountDemoData.email} renders the fixture constant from lib/fixtures/login.ts:12 (\"excel@moxnafrica.com\")"
+    },
+    {
+      "id": "login-surf-3",
+      "surface": "Inline error banner (missing email/password message)",
+      "liveness": "static",
+      "evidence": "app/login/page.tsx:91-93 and 139-143: purely client-side required-field validation copy set via local setError; genuine local logic meant to stay, though server auth errors will also need this slot once wired"
+    },
+    {
+      "id": "login-surf-4",
+      "surface": "Footer restricted-access copy interpolating the org name",
+      "liveness": "mock-fixture",
+      "evidence": "app/login/page.tsx:156-159: \"Access is restricted to {adminAccountDemoData.org} staff\" renders the fixture constant from lib/fixtures/login.ts:14 (\"MOXN Africa\")"
+    },
+    {
+      "id": "login-surf-5",
+      "surface": "Logo mark, \"OweMe Admin\" heading, and \"Sign in to the operations dashboard\" subtitle",
+      "liveness": "static",
+      "evidence": "app/login/page.tsx:9-26 and 105-113: decorative SVG uses design tokens var(--brand)/var(--gold); heading and subtitle are hardcoded local branding copy"
+    }
+  ]
+}

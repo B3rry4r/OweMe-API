@@ -1,0 +1,104 @@
+{
+  "screenId": "debts",
+  "route": "/debts",
+  "sourceFiles": [
+    "/workspace/projects/OweMe-Dashboard/app/(shell)/debts/page.tsx",
+    "/workspace/projects/OweMe-Dashboard/lib/fixtures/debts.ts"
+  ],
+  "notes": "Screen is explicitly read-only ('Cross-tenant view of debts and payments. Read only.', page.tsx:167). No write or action needs exist. All interactive controls (search, status select) filter local fixture state only. Privacy footnote (page.tsx:247-250) requires debtor personal data minimisation: customer phone must arrive masked or be maskable; only customer first name is shown.",
+  "needs": [
+    {
+      "id": "debts-need-1",
+      "kind": "read",
+      "summary": "Cross-tenant paged list of debts, each row joining the owning business name and minimised customer identity (first name plus masked phone), with amounts in integer kobo, due date, status, reminder count, and days-to-recovery for paid debts.",
+      "entities": ["Debt", "Business", "Customer"],
+      "fields": [
+        "id",
+        "businessName",
+        "customerFirstName",
+        "customerPhoneMasked",
+        "amountKobo",
+        "remainingKobo",
+        "dueDate",
+        "status",
+        "remindersSent",
+        "daysToRecovery"
+      ],
+      "filters/actions": "Filter by status (all | active | overdue | paid); free-text search matching business name or customer first name (page.tsx:146-156). Admin pagination per conventions (?page=&limit= -> {data, page, total}). Status vocabulary on screen is exactly active/overdue/paid (fixtures/debts.ts:4). Phone must be minimised server-side per the privacy footnote (page.tsx:247-250).",
+      "adminRole": "both"
+    },
+    {
+      "id": "debts-need-2",
+      "kind": "read",
+      "summary": "Cross-tenant debt-recovery aggregates for the stat row: total open remaining kobo across non-paid debts, kobo recovered in the current month from payments, count of overdue debts, and average days-to-recovery across fully paid debts.",
+      "entities": ["Debt", "Payment"],
+      "fields": [
+        "openRemainingKobo",
+        "recoveredThisMonthKobo",
+        "overdueDebtCount",
+        "avgDaysToRecovery"
+      ],
+      "filters/actions": "Aggregates must span ALL tenants and all rows, not just the current page (currently computed client-side over the full fixture set, page.tsx:127-144). 'Recovered this month' should be relative to the current calendar month, not the hardcoded '2026-07' prefix used by the fixture computation (page.tsx:132).",
+      "adminRole": "both"
+    },
+    {
+      "id": "debts-need-3",
+      "kind": "read",
+      "summary": "Cross-tenant recent payments feed: latest payments across all businesses with business name, amount in kobo, payment method, and paid-at timestamp, sorted newest first.",
+      "entities": ["Payment", "Business"],
+      "fields": ["id", "businessName", "amountKobo", "method", "paidAt"],
+      "filters/actions": "Sorted by paidAt descending (page.tsx:158-161); bounded to a recent window or paged per admin conventions. Method vocabulary on screen: 'pay link' | 'cash' | 'transfer' (fixtures/debts.ts:6).",
+      "adminRole": "both"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "debts-surf-1",
+      "surface": "Stat card row (Total open debt, Recovered this month, Overdue debts, Avg days to recovery)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:125,127-144,170-194 - stats computed via useMemo over debtsDemoData fixture and rendered in StatCards as if live"
+    },
+    {
+      "id": "debts-surf-2",
+      "surface": "All debts DataTable (business, customer, amount, remaining, due date, status badge, reminders)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:228-232 - DataTable rows come from filteredDebts, derived from debtsDemoData.debts (fixtures/debts.ts:35-195)"
+    },
+    {
+      "id": "debts-surf-3",
+      "surface": "SearchInput 'Search business or customer'",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:202-206 - controlled input whose onChange only sets local query state filtering fixture rows (page.tsx:146-156); no backend call"
+    },
+    {
+      "id": "debts-surf-4",
+      "surface": "Status filter Select (All statuses / Active / Overdue / Paid)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:207-217 - controlled Select mutating local status state to filter fixture rows; no backend call"
+    },
+    {
+      "id": "debts-surf-5",
+      "surface": "Payments feed DataTable (business, amount, method, when)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:240-244 - rows are sortedPayments, a locally sorted copy of debtsDemoData.payments (fixtures/debts.ts:196-267)"
+    },
+    {
+      "id": "debts-surf-6",
+      "surface": "EmptyState 'No debts match' shown when filters return zero rows",
+      "liveness": "static",
+      "evidence": "page.tsx:221-226 - fixed help copy ('Try a different search term or clear the status filter.') meant to stay local"
+    },
+    {
+      "id": "debts-surf-7",
+      "surface": "PageHeader title/subtitle and privacy footnote copy",
+      "liveness": "static",
+      "evidence": "page.tsx:165-168 and 247-250 - fixed labels and data-minimisation help copy, no data binding"
+    },
+    {
+      "id": "debts-surf-8",
+      "surface": "Debts SectionCard subtitle count ('N of M debts')",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:198 - interpolates filteredDebts.length and debts.length, both derived from the debtsDemoData fixture, into the section subtitle"
+    }
+  ]
+}

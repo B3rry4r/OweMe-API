@@ -18,8 +18,8 @@ export class InsightsService {
    *   1. Verify AI credits are available for `businessId` (fail-closed to PLAN_REQUIRED when out).
    *   2. Call the LLM behind the LlmProvider interface, e.g.
    *      `@Inject(LLM_PROVIDER) private readonly llm: LlmProvider` -> `llm.generateInsights(businessId)`.
-   *   3. On SUCCESS ONLY, debit 5 AI credits via CreditLedgerService.debitCredits(businessId, 5, 'insight')
-   *      (weighted insight = 5, debit-on-success per conventions §Metering).
+   *   3. On SUCCESS ONLY, debit 4 AI credits via CreditLedgerService.debitCredits(businessId, 4, 'insight')
+   *      (weighted insight = CREDIT_WEIGHTS.insightOrRisk = 4, debit-on-success per conventions §Metering).
    *   4. Return `{ insights: <object> }`.
    * Wiring requires importing UsageModule (CreditLedgerService) + LLM_PROVIDER from @common;
    * intentionally left unwired now so no credits are ever debited by the scaffold.

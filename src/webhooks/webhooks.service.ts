@@ -1,6 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  koboToNaira,
   PAYSTACK_GATEWAY,
   PaystackGateway,
   RECEIPT_VERIFIER,
@@ -9,7 +10,6 @@ import {
   uuidv7,
 } from '../common';
 import { IapPlatform, PlanId } from '../shared';
-import { CreditLedgerService } from '../usage/credit-ledger.service';
 
 /** Uniform 200 ack body for a processed/ignored webhook (providers only care about the 200). */
 export interface WebhookAck {
@@ -17,7 +17,7 @@ export interface WebhookAck {
   processed: boolean;
 }
 
-/** Loose provider payload shapes — external, provider-defined. We only trust fields AFTER verification. */
+/** Loose provider payload shapes: external, provider-defined. We only trust fields AFTER verification. */
 interface PaystackEvent {
   event?: string;
   data?: {
@@ -31,7 +31,7 @@ interface IapEvent {
   platform?: IapPlatform;
   productId?: string;
   receipt?: string; // signed payload / receipt the RECEIPT_VERIFIER checks
-  businessId?: string; // appAccountToken -> tenant (part of the signed payload; trusted post-verify)
+  businessId?: string; // present on some provider payloads but NEVER read; tenant binding is server-side only
   notificationType?: string; // e.g. SUBSCRIBED / DID_RENEW / EXPIRED / CANCELLED
 }
 
@@ -47,8 +47,16 @@ const IAP_EXPIRE_TYPES = new Set([
 /** Days of entitlement granted on a successful subscription notification. */
 const RENEWAL_DAYS = 30;
 
+/** Unified OweMe-credits bundle product ids (rev 2), e.g. oweme_credits_600. */
+const CREDITS_BUNDLE_PRODUCT = /^oweme_credits_\d+$/;
+
+/** Kobo -> display naira for notification copy, e.g. 250000 -> '₦2,500'. */
+function formatNaira(kobo: number): string {
+  return `₦${koboToNaira(kobo).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
+}
+
 /**
- * WebhooksService — inbound provider webhooks (Paystack charges, IAP server notifications).
+ * WebhooksService: inbound provider webhooks (Paystack charges, IAP server notifications).
  *
  * BOTH endpoints are unauthenticated by user (routes are @Public); the ONLY trust boundary is
  * the provider signature. We NEVER act on an unverified payload:
@@ -57,16 +65,29 @@ const RENEWAL_DAYS = 30;
  *
  * Both are idempotent so a provider retry never double-applies:
  *   - Paystack is idempotent on data.reference (a Payment already bearing that reference is a no-op).
- *   - IAP is idempotent on the store transaction id (the BillingTransaction primary key).
+ *   - IAP is idempotent on the store transaction id: a bundle bound to an existing
+ *     BillingTransaction was already credited at verify-receipt time (no-op), and re-applying a
+ *     subscription lifecycle notification upserts the same entitlement state.
  *
- * This service reads/writes only Payment/Debt/Subscription/Business/BillingTransaction TABLES via
- * Prisma and credits ledgers through the UsageModule-exported services; it edits no shared code.
+ * Charge-recording invariant: a VERIFIED charge is never dropped; the money arrived and must be
+ * visible. The Payment row always carries the full charged amount; the debt's derived paid state
+ * caps at its principal (remaining clamps to 0). Anomalous charges (archived debt, overpayment)
+ * are recorded AND flagged to the owner via Notification rows instead of being rejected.
+ *
+ * IAP tenant binding is SERVER-SIDE ONLY: POST /billing/verify-receipt persisted the store
+ * transaction id as the BillingTransaction primary key under the authenticated tenant, and that
+ * row is the sole source of truth for which business a store transaction belongs to. The raw
+ * notification body's businessId is never read; an event with no binding is acked and ignored.
+ *
+ * This service reads/writes only Payment/Debt/Customer/Notification/Subscription/Business/
+ * BillingTransaction TABLES via Prisma; it edits no shared code.
  */
 @Injectable()
 export class WebhooksService {
+  private readonly logger = new Logger(WebhooksService.name);
+
   constructor(
     private readonly prisma: PrismaService,
-    private readonly credits: CreditLedgerService,
     @Inject(PAYSTACK_GATEWAY) private readonly paystack: PaystackGateway,
     @Inject(RECEIPT_VERIFIER) private readonly verifier: ReceiptVerifier,
   ) {}
@@ -107,6 +128,9 @@ export class WebhooksService {
       return { received: true, processed: false };
     }
 
+    // Record the verified charge UNCONDITIONALLY and in full: the money arrived and must be
+    // visible even when the debt is archived or the charge exceeds the balance. The debt's
+    // derived paid state caps at its amount (remaining clamps to 0); the Payment row never does.
     await this.prisma.payment.create({
       data: {
         id: uuidv7(),
@@ -118,13 +142,48 @@ export class WebhooksService {
       },
     });
 
-    // Settle: when the balance reaches 0 the reminder schedule stops (nextReminderAt cleared).
+    // Settle: at (or over) the principal the debt is fully paid and the reminder schedule stops.
     const paid = await this.prisma.payment.aggregate({
       where: { businessId: debt.businessId, debtId: debt.id },
       _sum: { amount: true },
     });
-    if ((paid._sum.amount ?? 0) >= debt.amount) {
+    const paidTotal = paid._sum.amount ?? 0;
+    if (paidTotal >= debt.amount) {
       await this.prisma.debt.update({ where: { id: debt.id }, data: { nextReminderAt: null } });
+    }
+    const excess = paidTotal - debt.amount;
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: debt.customerId },
+      select: { name: true },
+    });
+    const payer = customer?.name ?? 'A customer';
+
+    // App-feed Notification rows: the normal path gets a payment-received row; the anomaly
+    // paths (archived debt, overpayment) get explicit owner-facing flags instead.
+    if (debt.deleted) {
+      // Archived stays archived: the payment is recorded but the debt is NEVER unarchived here.
+      await this.createNotification(
+        debt.businessId,
+        'Archived debt received a payment',
+        `${payer} paid ${formatNaira(amount)} on an archived debt via Paystack link. ` +
+          'The debt stays archived; restore it if it should be active again.',
+      );
+    }
+    if (excess > 0) {
+      await this.createNotification(
+        debt.businessId,
+        'Debt overpaid',
+        `${payer} paid ${formatNaira(amount)} via Paystack link. The debt is now fully paid ` +
+          `and the total received exceeds it by ${formatNaira(excess)}.`,
+      );
+    }
+    if (!debt.deleted && excess <= 0) {
+      await this.createNotification(
+        debt.businessId,
+        'Payment received',
+        `${payer} paid ${formatNaira(amount)} via Paystack link.`,
+      );
     }
 
     return { received: true, processed: true };
@@ -134,8 +193,9 @@ export class WebhooksService {
 
   /**
    * POST /webhooks/iap. App Store Server Notifications / Play RTDN. Verifies the signed payload
-   * via RECEIPT_VERIFIER, then applies out-of-band: subscription lifecycle -> Subscription +
-   * Business.plan; consumable bundle -> the matching ledger. Idempotent on the store transaction id.
+   * via RECEIPT_VERIFIER, resolves the tenant from the BillingTransaction persisted at
+   * verify-receipt time (NEVER from the unsigned body), then applies the subscription lifecycle
+   * out-of-band. Unbound or bundle-bound events are acked and ignored (no state change).
    */
   async handleIap(body: IapEvent): Promise<WebhookAck> {
     if (!body?.platform || !body?.productId || !body?.receipt) {
@@ -151,40 +211,32 @@ export class WebhooksService {
       throw new UnauthenticatedException('IAP notification could not be verified');
     }
 
-    // Idempotent on the store transaction id (BillingTransaction primary key).
-    const already = await this.prisma.billingTransaction.findUnique({
+    // Server-side tenant binding: the store transaction id is the BillingTransaction primary
+    // key written by the authenticated verify-receipt call. No binding -> ack and ignore;
+    // body.businessId is raw unsigned input and is never trusted.
+    const binding = await this.prisma.billingTransaction.findUnique({
       where: { id: result.transactionId },
     });
-    if (already) {
+    if (!binding) {
+      this.logger.warn(
+        `IAP notification ignored: no server-side tenant binding for store transaction '${result.transactionId}'`,
+      );
+      return { received: true, processed: false };
+    }
+    const businessId = binding.businessId;
+
+    const productId = result.productId || binding.productId;
+
+    // Consumable OweMe-credits bundle: the bound transaction already credited the ledger at
+    // verify-receipt time; crediting again here would double-apply. Idempotent no-op.
+    if (CREDITS_BUNDLE_PRODUCT.test(productId)) {
       return { received: true, processed: false };
     }
 
-    const businessId = body.businessId;
-    if (!businessId) {
-      return { received: true, processed: false }; // no tenant to attribute the event to
-    }
-    const business = await this.prisma.business.findUnique({ where: { id: businessId } });
-    if (!business) {
-      return { received: true, processed: false };
-    }
-
-    const productId = result.productId || body.productId;
-
-    // 1) Unified OweMe-credits bundle credited out-of-band (rev 2).
-    // (amount 0: the store price is not carried on the out-of-band notification — the
-    //  BillingTransaction row exists here to key idempotency on the store transaction id.)
-    const creditsBundle = /^oweme_credits_(\d+)$/.exec(productId);
-    if (creditsBundle) {
-      await this.credits.creditCredits(businessId, Number(creditsBundle[1]), 'iap-webhook');
-      await this.recordTxn(result.transactionId, businessId, 'credits-bundle', productId, 0);
-      return { received: true, processed: true };
-    }
-
-    // 2) Subscription lifecycle (plan product resolved from the seeded Plan catalog).
+    // Subscription lifecycle on the BOUND tenant (renewal extends, expiry fails closed).
     const plan = await this.prisma.plan.findFirst({ where: { productId } });
     if (plan) {
       await this.applySubscription(businessId, plan.id as PlanId, body.notificationType);
-      await this.recordTxn(result.transactionId, businessId, 'subscription', productId, plan.pricePerMonth);
       return { received: true, processed: true };
     }
 
@@ -224,15 +276,10 @@ export class WebhooksService {
     });
   }
 
-  private recordTxn(
-    id: string,
-    businessId: string,
-    kind: string,
-    productId: string,
-    amount: number,
-  ): Promise<unknown> {
-    return this.prisma.billingTransaction.create({
-      data: { id, businessId, kind, productId, label: productId, amount },
+  /** Insert an app-feed Notification row (kind 'payment'; feed rows were previously never written). */
+  private createNotification(businessId: string, title: string, body: string): Promise<unknown> {
+    return this.prisma.notification.create({
+      data: { id: uuidv7(), businessId, title, body, kind: 'payment' },
     });
   }
 }

@@ -1,0 +1,95 @@
+{
+  "screenId": "audit-log",
+  "route": "/audit-log",
+  "needs": [
+    {
+      "id": "audit-log-need-1",
+      "kind": "read",
+      "summary": "Paginated, newest-first list of admin audit entries, each joining the acting admin's display identity and the target business name; entries with a state change carry a before/after pair, others carry a free-text note; system-level events (sign-in) have a null target business.",
+      "entities": ["AdminAuditLog", "AdminUser", "Business"],
+      "fields": [
+        "id",
+        "at",
+        "adminId",
+        "adminName",
+        "adminRole",
+        "actionType",
+        "action",
+        "targetBusiness",
+        "before",
+        "after",
+        "note"
+      ],
+      "filters/actions": "Filter by adminId (exact), by actionType (enum: plan-change, credit-grant, test-flag, reset, login), and substring search on target business name; sort descending by timestamp; response must include total entry count and filtered/shown count (screen renders 'Showing X of Y entries'), matching the admin pagination convention {data, page, total}. Screen also groups/labels by month (header 'July 2026'), implying a time-window or month scope parameter.",
+      "adminRole": "both"
+    },
+    {
+      "id": "audit-log-need-2",
+      "kind": "read",
+      "summary": "Distinct list of admin users who have audit entries (or simply all admin users), used to populate the 'Filter by admin' dropdown with id and display name.",
+      "entities": ["AdminUser"],
+      "fields": ["id", "name"],
+      "filters/actions": "None beyond distinct/enumeration; screen derives it today by deduplicating adminId/adminName over fixture rows (page.tsx lines 86-95).",
+      "adminRole": "both"
+    },
+    {
+      "id": "audit-log-need-3",
+      "kind": "read",
+      "summary": "Implicit invariant, not an endpoint of its own: the audit log store must be append-only (no admin-facing edit or delete), matching the screen's footnote and the conventions rule that every admin WRITE endpoint records to admin_audit_log with actor, action, target, timestamp, and detail/diff.",
+      "entities": ["AdminAuditLog"],
+      "fields": ["id", "at", "adminId", "actionType", "action", "targetBusiness", "before", "after", "note"],
+      "filters/actions": "No write surface exists on this screen; entries are produced as side effects of other admin write endpoints.",
+      "adminRole": "both"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "audit-log-surf-1",
+      "surface": "Audit entries DataTable (Time / Admin / Action / Target business / Detail columns)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/audit-log/page.tsx line 147 renders DataTable over `filtered`, which is computed from `auditLogDemoData` imported at line 17 from lib/fixtures/auditLog.ts"
+    },
+    {
+      "id": "audit-log-surf-2",
+      "surface": "SearchInput 'Search target business'",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/audit-log/page.tsx lines 126-130; controlled input whose query only filters the local fixture array at line 107"
+    },
+    {
+      "id": "audit-log-surf-3",
+      "surface": "Select 'Filter by admin'",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/audit-log/page.tsx lines 131-136; options are deduplicated from auditLogDemoData (lines 86-95) and filtering is client-side over the fixture (line 101)"
+    },
+    {
+      "id": "audit-log-surf-4",
+      "surface": "Select 'Filter by action type'",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/audit-log/page.tsx lines 137-142; options are the hardcoded actionTypeOptions constant (lines 22-29) filtering the local fixture at line 104"
+    },
+    {
+      "id": "audit-log-surf-5",
+      "surface": "SectionCard header: title 'July 2026' plus subtitle 'Showing X of Y entries' counts",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/audit-log/page.tsx lines 122-123; the month is a hardcoded string literal and both counts are computed from fixture array lengths"
+    },
+    {
+      "id": "audit-log-surf-6",
+      "surface": "PageHeader 'Audit log' title and subtitle",
+      "liveness": "static",
+      "evidence": "app/(shell)/audit-log/page.tsx lines 117-120; fixed label copy with no data binding"
+    },
+    {
+      "id": "audit-log-surf-7",
+      "surface": "EmptyState 'No matching entries' (shown when filters exclude all rows)",
+      "liveness": "static",
+      "evidence": "app/(shell)/audit-log/page.tsx lines 149-153; fixed copy rendered on the filtered.length === 0 branch"
+    },
+    {
+      "id": "audit-log-surf-8",
+      "surface": "Append-only footnote paragraph under the table",
+      "liveness": "static",
+      "evidence": "app/(shell)/audit-log/page.tsx lines 155-158; help copy meant to stay local"
+    }
+  ]
+}

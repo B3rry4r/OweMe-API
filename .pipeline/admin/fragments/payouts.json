@@ -1,0 +1,85 @@
+{
+  "screenId": "payouts",
+  "route": "/payouts",
+  "needs": [
+    {
+      "id": "payouts-need-1",
+      "kind": "read",
+      "summary": "List trader payout accounts (one Paystack subaccount per business) with bank details, subaccount/NUBAN-resolution status, and per-account settlement aggregates; searchable, filterable, and paged per admin table convention ({data, page, total}).",
+      "entities": ["Business", "PayoutAccount", "Settlement"],
+      "fields": [
+        "id",
+        "businessName",
+        "bankName",
+        "nuban (should arrive masked or role-gated; dashboard currently receives the full 10-digit NUBAN and masks client-side, page.tsx:25-27)",
+        "accountName",
+        "status (active|pending|failed)",
+        "settledMonthKobo (settled to trader in current month, integer kobo)",
+        "settledTotalKobo (settled since onboarding, integer kobo)",
+        "pendingSettlements (count of payments received but not yet settled by processor)",
+        "lastSettlementAt (nullable ISO timestamp)"
+      ],
+      "filters/actions": "Free-text search across businessName, bankName, accountName (page.tsx:104-114); status filter all|active|pending|failed (page.tsx:41-48, 159-164). Read-only monitor surface, no mutations on this screen.",
+      "adminRole": "both"
+    },
+    {
+      "id": "payouts-need-2",
+      "kind": "read",
+      "summary": "Aggregate payout/settlement health stats for the four header cards. Currently computed client-side by reducing the full fixture array (page.tsx:92-102); once the list is paginated the backend must supply these totals directly.",
+      "entities": ["PayoutAccount", "Settlement"],
+      "fields": [
+        "payoutAccountsSetUpCount",
+        "activeSubaccountCount",
+        "settledToTradersMonthKobo (current calendar month sum of settledMonthKobo)",
+        "pendingSettlementsTotal (sum of pendingSettlements)",
+        "failedAccountResolutionCount (accounts with status=failed, i.e. NUBAN could not be verified)"
+      ],
+      "filters/actions": "Implicit current-calendar-month window for settledToTradersMonthKobo (the UI sub-label hardcodes 'July 2026', page.tsx:132). No other filters.",
+      "adminRole": "both"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "payouts-surf-1",
+      "surface": "Stat card row (payout accounts set up, settled to traders this month, pending settlements, failed account resolutions)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/payouts/page.tsx:90 `const accounts = payoutsDemoData;` feeds the reducers at lines 92-102 that populate the four StatCards at lines 123-147"
+    },
+    {
+      "id": "payouts-surf-2",
+      "surface": "Payout accounts DataTable (business, bank, masked NUBAN, account name, subaccount status badge, settled total, last settlement)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/payouts/page.tsx:170 `<DataTable columns={columns} rows={filtered} ...>` where `filtered` derives from payoutsDemoData (page.tsx:90, 104-114) defined in lib/fixtures/payouts.ts:21"
+    },
+    {
+      "id": "payouts-surf-3",
+      "surface": "SearchInput over business/bank/account name",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/payouts/page.tsx:154-158 controlled input; its only effect is client-side filtering of the fixture array in the useMemo at lines 104-114, no network call"
+    },
+    {
+      "id": "payouts-surf-4",
+      "surface": "Subaccount status Select filter (all/active/pending/failed)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/payouts/page.tsx:159-164 controlled Select mutating only local `status` state, applied to the fixture array at line 107"
+    },
+    {
+      "id": "payouts-surf-5",
+      "surface": "EmptyState 'No accounts match' when filters exclude all rows",
+      "liveness": "static",
+      "evidence": "app/(shell)/payouts/page.tsx:172-176 fixed icon/title/body copy, rendered when the client-side filter yields zero rows"
+    },
+    {
+      "id": "payouts-surf-6",
+      "surface": "PageHeader title/subtitle",
+      "liveness": "static",
+      "evidence": "app/(shell)/payouts/page.tsx:118-121 fixed strings 'Payouts' / 'Trader payout accounts and settlement health'"
+    },
+    {
+      "id": "payouts-surf-7",
+      "surface": "'How settlement works' explainer card (fee split copy)",
+      "liveness": "static",
+      "evidence": "app/(shell)/payouts/page.tsx:180-190 hardcoded prose paragraph; fee figures are literal constants formatted via naira(10_000)/naira(250_000)/naira(50_000)"
+    }
+  ]
+}

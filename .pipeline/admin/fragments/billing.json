@@ -1,0 +1,115 @@
+{
+  "screenId": "billing",
+  "route": "/billing",
+  "sourceFiles": [
+    "/workspace/projects/OweMe-Dashboard/app/(shell)/billing/page.tsx",
+    "/workspace/projects/OweMe-Dashboard/lib/fixtures/billing.ts"
+  ],
+  "needs": [
+    {
+      "id": "billing-need-1",
+      "kind": "read",
+      "summary": "List of paid subscriptions across all businesses, one row per subscription, joined to the business display name.",
+      "entities": ["Business", "Subscription"],
+      "fields": [
+        "id",
+        "businessName",
+        "plan (market|business|wholesale|enterprise as rendered; NOTE fixture predates rev 2 five-plan ladder)",
+        "priceKobo (integer kobo, monthly)",
+        "source (google_play|app_store|direct_invoice)",
+        "currentPeriodEnd (date)",
+        "state (active|grace|canceled)"
+      ],
+      "filters/actions": "Filter by source (all|google_play|app_store|direct_invoice) and by state (all|active|grace|canceled); admin paged-table convention ?page=&limit= applies.",
+      "adminRole": "superadmin (conventions matrix lists billing among the surfaces support may not touch; if 'touch' is later ruled write-only, reads could widen to both)"
+    },
+    {
+      "id": "billing-need-2",
+      "kind": "read",
+      "summary": "List of billing transactions for the current month: subscription renewals, credit bundle purchases and enterprise invoices, with store-fee breakdown.",
+      "entities": ["Business", "BillingTransaction"],
+      "fields": [
+        "id",
+        "time (datetime with timezone)",
+        "businessName",
+        "type (subscription_renewal|bundle_purchase|enterprise_invoice)",
+        "sku (store/invoice SKU string, e.g. oweme_credits_600, oweme_business_monthly, oweme_ent_60m_jul26)",
+        "grossKobo",
+        "storeFeeKobo (0 for direct_invoice)",
+        "netKobo"
+      ],
+      "filters/actions": "Free-text search across business name, SKU and type label; implicit period filter = current month (section subtitle says 'this month'); ordered newest first as rendered.",
+      "adminRole": "superadmin (same billing-surface reasoning as billing-need-1)"
+    },
+    {
+      "id": "billing-need-3",
+      "kind": "read",
+      "summary": "Headline billing aggregates for the stat cards: active subscription count, grace (failed-renewal) count, MRR as sum of active plan prices, and total store fees for the current month.",
+      "entities": ["Subscription", "BillingTransaction"],
+      "fields": [
+        "activeSubscriptionCount",
+        "graceSubscriptionCount",
+        "mrrKobo (sum of priceKobo over state=active subscriptions)",
+        "storeFeeKobo (sum of storeFeeKobo over current-month transactions)"
+      ],
+      "filters/actions": "Currently derived client-side from the two lists (page.tsx lines 159-170); backend may either return complete unpaginated lists or expose these aggregates directly. If lists are paginated, aggregates MUST come from the server or the cards will be wrong.",
+      "adminRole": "superadmin (billing surface)"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "billing-surf-1",
+      "surface": "Stat card row (Active subscriptions, MRR, Store fee this month, Failed renewals)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:153 destructures billingDemoData and page.tsx:159-170 computes all four stats from those fixture arrays, rendered as live at lines 200-224."
+    },
+    {
+      "id": "billing-surf-2",
+      "surface": "Subscriptions table",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:248-252 renders DataTable rows={visibleSubscriptions}, which page.tsx:172-180 filters straight from fixture billingDemoData.subscriptions (billing.ts:40-158)."
+    },
+    {
+      "id": "billing-surf-3",
+      "surface": "Subscriptions 'Filter by source' select",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:232-237 controlled Select updating local sourceFilter state that only filters the fixture array; no request leaves the page."
+    },
+    {
+      "id": "billing-surf-4",
+      "surface": "Subscriptions 'Filter by state' select",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:238-243 controlled Select updating local stateFilter state applied to fixture data only."
+    },
+    {
+      "id": "billing-surf-5",
+      "surface": "Transactions table",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:273-278 renders DataTable rows={visibleTransactions} derived at page.tsx:182-191 from fixture billingDemoData.transactions (billing.ts:159-300)."
+    },
+    {
+      "id": "billing-surf-6",
+      "surface": "Transactions search input (business, SKU or type)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:266-270 controlled SearchInput updating local txnQuery; filtering happens client-side over the fixture array at page.tsx:182-191."
+    },
+    {
+      "id": "billing-surf-7",
+      "surface": "Page header title and subtitle",
+      "liveness": "static",
+      "evidence": "page.tsx:195-198 PageHeader with literal title 'Billing' and subtitle copy; intended to stay local."
+    },
+    {
+      "id": "billing-surf-8",
+      "surface": "Subscriptions empty state (no subscriptions match)",
+      "liveness": "static",
+      "evidence": "page.tsx:254-258 EmptyState with literal help copy, shown only when filters exclude all fixture rows."
+    },
+    {
+      "id": "billing-surf-9",
+      "surface": "Transactions empty state (no transactions match)",
+      "liveness": "static",
+      "evidence": "page.tsx:280-285 EmptyState with literal help copy including SKU example oweme_credits_600."
+    }
+  ]
+}

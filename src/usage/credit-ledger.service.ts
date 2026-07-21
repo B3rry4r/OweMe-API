@@ -32,7 +32,7 @@ export interface CreditLedgerState {
 /**
  * CreditLedgerService — the ONE shared AI-credits ledger (conventions §AI / §Metering).
  *
- * Downstream consumers (voice=1, insights=5, risk=5) inject this and call `debitCredits`
+ * Downstream consumers (voice=1, insights=4, risk=4) inject this and call `debitCredits`
  * AFTER their operation succeeds (debit-on-success only). Billing bundle top-ups call
  * `creditCredits`. Weighted amounts are passed by the caller.
  *

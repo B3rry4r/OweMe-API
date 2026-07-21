@@ -1,0 +1,107 @@
+{
+  "screenId": "businesses",
+  "route": "/businesses",
+  "needs": [
+    {
+      "id": "businesses-need-1",
+      "kind": "read",
+      "summary": "Paginated, filterable list of all businesses on the platform, one row per business, combining identity, plan, BVUM position, credit usage, staff count, join date, and status.",
+      "entities": ["Business", "Plan", "UsageCredits", "StaffMember"],
+      "fields": [
+        "id",
+        "name",
+        "ownerPhone",
+        "plan (starter|market|business|wholesale|enterprise)",
+        "bvumKobo (current business value under management, integer kobo)",
+        "ceilingKobo (effective plan BVUM ceiling; for enterprise reflects the purchased band, N40M base + N20M per band)",
+        "creditsUsed (current cycle)",
+        "creditsGrant (monthly grant; null means enterprise fair use)",
+        "staffCount",
+        "joinedAt",
+        "status (active|paused|test)"
+      ],
+      "filters/actions": "Server-side filters: plan (exact enum match), status (exact enum match, where 'test' derives from the test-account flag), free-text search matching business name substring or owner phone with whitespace stripped. Offset pagination per conventions ({data, page, total}). Over-ceiling (bvumKobo > ceilingKobo) and over-grant (creditsUsed > creditsGrant) states are derived client-side from these fields, no extra flags needed.",
+      "adminRole": "both"
+    },
+    {
+      "id": "businesses-need-2",
+      "kind": "read",
+      "summary": "Platform-wide total business count for the page subtitle ('N businesses on the platform') and the 'Showing X of N' filtered variant. Satisfied by the unfiltered total in the paginated envelope; no separate endpoint implied.",
+      "entities": ["Business"],
+      "fields": ["total (count of all businesses)"],
+      "filters/actions": "none",
+      "adminRole": "both"
+    },
+    {
+      "id": "businesses-need-3",
+      "kind": "read",
+      "summary": "Row click navigates to /businesses/detail/?id=<businessId>; this screen only needs a stable Business.id usable as the detail lookup key. The detail payload itself is the detail screen's fragment, not this one's.",
+      "entities": ["Business"],
+      "fields": ["id"],
+      "filters/actions": "navigation only, no additional backend call from this screen",
+      "adminRole": "both"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "businesses-surf-1",
+      "surface": "PageHeader subtitle business count ('16 businesses on the platform' / 'Showing X of Y businesses')",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/businesses/page.tsx:164-168 computes total from businessesDemoData.length and renders it as a live platform statistic"
+    },
+    {
+      "id": "businesses-surf-2",
+      "surface": "SearchInput (search name or phone)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/businesses/page.tsx:175-179 wired to local state; page.tsx:112-123 filters the in-memory businessesDemoData array, no network call"
+    },
+    {
+      "id": "businesses-surf-3",
+      "surface": "Plan filter Select (All plans / Starter / Market / Business / Wholesale / Enterprise)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/businesses/page.tsx:180-185 controlled by local planFilter state applied to fixture rows at page.tsx:115"
+    },
+    {
+      "id": "businesses-surf-4",
+      "surface": "Status filter Select (All statuses / Active / Paused / Test)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/businesses/page.tsx:186-191 controlled by local statusFilter state applied to fixture rows at page.tsx:116"
+    },
+    {
+      "id": "businesses-surf-5",
+      "surface": "Businesses DataTable (columns: Business, Owner phone, Plan, BVUM, Credits, Staff, Joined, Status)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/businesses/page.tsx:114 sources rows from businessesDemoData (lib/fixtures/businesses.ts:32-241); rendered as live data at page.tsx:200-205"
+    },
+    {
+      "id": "businesses-surf-6",
+      "surface": "BVUM meter cell (usage vs ceiling with 'over' state)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/businesses/page.tsx:52-75 BvumCell renders fixture bvumKobo/ceilingKobo through Meter; over state derives from the same fixture fields"
+    },
+    {
+      "id": "businesses-surf-7",
+      "surface": "Credits cell (used / grant, 'fair use' for null grant, over-grant highlighting)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/businesses/page.tsx:77-88 CreditsCell renders fixture creditsUsed/creditsGrant with over-grant styling"
+    },
+    {
+      "id": "businesses-surf-8",
+      "surface": "Row click navigation to business detail",
+      "liveness": "wired",
+      "evidence": "app/(shell)/businesses/page.tsx:204 onRowClick pushes /businesses/detail/?id=<id>; target page exists at app/(shell)/businesses/detail/page.tsx (navigation is real; the destination screen is itself fixture-stage)"
+    },
+    {
+      "id": "businesses-surf-9",
+      "surface": "EmptyState ('No businesses match' with reset guidance)",
+      "liveness": "static",
+      "evidence": "app/(shell)/businesses/page.tsx:193-198 fixed local copy shown when the client-side filter yields zero rows"
+    },
+    {
+      "id": "businesses-surf-10",
+      "surface": "PageHeader title 'Businesses' and column header labels",
+      "liveness": "static",
+      "evidence": "app/(shell)/businesses/page.tsx:172 and 125-162 fixed labels meant to stay local"
+    }
+  ]
+}

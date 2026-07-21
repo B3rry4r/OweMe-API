@@ -1,0 +1,135 @@
+{
+  "screenId": "overview",
+  "route": "/",
+  "sourceFiles": [
+    "app/(shell)/page.tsx",
+    "lib/fixtures/overview.ts"
+  ],
+  "needs": [
+    {
+      "id": "overview-need-1",
+      "kind": "read",
+      "summary": "Platform-wide business and subscription headcounts: total registered businesses (all plans including starter) and count of active paid subscriptions; the page derives paid-share percent client-side.",
+      "entities": ["Business", "Subscription"],
+      "fields": ["registeredBusinesses (count of Business)", "activePaidSubscriptions (count of Subscription where status=active and plan != starter)"],
+      "filters/actions": "aggregate counts, no filters exposed on screen",
+      "adminRole": "both"
+    },
+    {
+      "id": "overview-need-2",
+      "kind": "read",
+      "summary": "Current MRR in kobo: monthly recurring subscription revenue across the rev 2 five-plan ladder (market/business/wholesale flat prices plus enterprise band amounts).",
+      "entities": ["Subscription", "Plan", "EnterpriseBand"],
+      "fields": ["mrrKobo (sum of active subscription monthly price in kobo, enterprise contributions from band pricing)"],
+      "filters/actions": "single current-value aggregate, integer kobo",
+      "adminRole": "both"
+    },
+    {
+      "id": "overview-need-3",
+      "kind": "read",
+      "summary": "Credits burned in the current calendar month across all businesses (unified OweMe credits: reminders, voice parses, AI insights).",
+      "entities": ["CreditLedger"],
+      "fields": ["creditsBurnedThisMonth (sum of debit/burn ledger entries)"],
+      "filters/actions": "filter: entry type = burn/debit, period = current month; aggregated across all usage kinds",
+      "adminRole": "both"
+    },
+    {
+      "id": "overview-need-4",
+      "kind": "read",
+      "summary": "Pay-link recovery money for the current month: gross amount recovered to businesses via pay links and the OweMe commission share of pay-link fees, both integer kobo.",
+      "entities": ["PayLinkPayment"],
+      "fields": ["recoveredThisMonthKobo (sum of successful pay-link payment amounts)", "commissionThisMonthKobo (sum of OweMe commission/fee share)"],
+      "filters/actions": "filter: payment status = successful, period = current month",
+      "adminRole": "both"
+    },
+    {
+      "id": "overview-need-5",
+      "kind": "read",
+      "summary": "Weekly pay-link recovery time series: 12 weekly totals in kobo, oldest week first, feeding the sparkline; the page derives latest-week value and week-over-week percent change client-side.",
+      "entities": ["PayLinkPayment"],
+      "fields": ["weeklyRecoveredKobo (array of 12 weekly sums, oldest first)"],
+      "filters/actions": "group by ISO week over trailing 12 weeks, successful payments only",
+      "adminRole": "both"
+    },
+    {
+      "id": "overview-need-6",
+      "kind": "read",
+      "summary": "Current business count per plan across the full five-tier ladder: starter, market, business, wholesale, enterprise.",
+      "entities": ["Business", "Subscription"],
+      "fields": ["planCounts.starter", "planCounts.market", "planCounts.business", "planCounts.wholesale", "planCounts.enterprise"],
+      "filters/actions": "group businesses by current plan; must include starter (free) businesses",
+      "adminRole": "both"
+    },
+    {
+      "id": "overview-need-7",
+      "kind": "read",
+      "summary": "Recent platform event feed: latest cross-domain events with business name, human-readable event label, severity/category tone, and timestamp. Fixture event vocabulary: business registered, plan upgrade, subscription renewed, credit bundle purchased, BVUM ceiling hit, payout account verified. Screen sorts descending by time and shows 10.",
+      "entities": ["PlatformEvent", "Business", "Subscription", "CreditLedger", "BvumCounter", "PayoutAccount"],
+      "fields": ["id", "business (display name)", "event (label/type)", "tone (brand|gold|neutral|danger|info)", "at (ISO 8601 timestamp with offset)"],
+      "filters/actions": "latest N (screen uses 10), sorted newest first; either a persisted event/audit stream or a union view over the source domains",
+      "adminRole": "both"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "overview-surf-1",
+      "surface": "Page header: title 'Overview' and subtitle 'Platform health across businesses, subscriptions and pay links'",
+      "liveness": "static",
+      "evidence": "app/(shell)/page.tsx:50-53 - PageHeader with hardcoded title/subtitle copy meant to stay local"
+    },
+    {
+      "id": "overview-surf-2",
+      "surface": "StatCard 'Registered businesses'",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/page.tsx:56-60 renders d.registeredBusinesses where d = overviewDemoData (page.tsx:32), constant defined at lib/fixtures/overview.ts:35"
+    },
+    {
+      "id": "overview-surf-3",
+      "surface": "StatCard 'Active paid subscriptions' incl. derived paid-share percent sub-line",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/page.tsx:61-65 renders d.activePaidSubscriptions and paidSharePct computed from fixture values (page.tsx:40-42; lib/fixtures/overview.ts:36)"
+    },
+    {
+      "id": "overview-surf-4",
+      "surface": "StatCard 'MRR'",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/page.tsx:66-71 renders compactNaira(d.mrrKobo) from fixture constant lib/fixtures/overview.ts:39"
+    },
+    {
+      "id": "overview-surf-5",
+      "surface": "StatCard 'Credits burned this month'",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/page.tsx:72-77 renders d.creditsBurnedThisMonth from fixture constant lib/fixtures/overview.ts:40"
+    },
+    {
+      "id": "overview-surf-6",
+      "surface": "StatCard 'Recovered via pay links'",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/page.tsx:78-83 renders compactNaira(d.recoveredThisMonthKobo) from fixture constant lib/fixtures/overview.ts:41"
+    },
+    {
+      "id": "overview-surf-7",
+      "surface": "StatCard 'Pay link commission'",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/page.tsx:84-89 renders naira(d.commissionThisMonthKobo) from fixture constant lib/fixtures/overview.ts:42"
+    },
+    {
+      "id": "overview-surf-8",
+      "surface": "'Recovered per week' section: latest-week naira amount, week-over-week percent copy, and 12-point Sparkline",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/page.tsx:93-107 renders latestWeek/weekChangePct (derived at page.tsx:34-39) and Sparkline data={weekly}, all sourced from fixture array lib/fixtures/overview.ts:43-47"
+    },
+    {
+      "id": "overview-surf-9",
+      "surface": "'Businesses by plan' BarList (5 plan rows with counts)",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/page.tsx:109-120 maps PLAN_LABELS over d.planCounts, fixture object lib/fixtures/overview.ts:48-54"
+    },
+    {
+      "id": "overview-surf-10",
+      "surface": "'Recent activity' DataTable: business name, event Badge with tone, formatted timestamp; latest 10 sorted descending",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/page.tsx:123-151 renders rows={latestActivity}, sorted/sliced at page.tsx:44-46 from fixture array lib/fixtures/overview.ts:55-140"
+    }
+  ]
+}

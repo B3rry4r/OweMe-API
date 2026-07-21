@@ -1,0 +1,98 @@
+{
+  "screenId": "pay-links",
+  "route": "/pay-links",
+  "needs": [
+    {
+      "id": "pay-links-need-1",
+      "kind": "read",
+      "summary": "List link payments with the internal fee split: each row shows time, business name, debtor first name, amount, combined fee, OweMe commission, processor share, and status. Fee split must be server-authoritative (the screen currently recomputes 2.5% + N100 cap N2,500 combined and 1% cap N500 commission client-side).",
+      "entities": ["LinkPayment", "Business", "Debtor"],
+      "fields": ["id", "time", "business.name", "debtor.firstName", "amountKobo", "combinedFeeKobo", "commissionKobo", "processorShareKobo", "status"],
+      "filters/actions": "Ordered newest-first; statuses settled|pending|failed; admin paged list per conventions (?page=&limit= -> {data, page, total})",
+      "adminRole": "both"
+    },
+    {
+      "id": "pay-links-need-2",
+      "kind": "read",
+      "summary": "Monthly link-payment aggregates over SETTLED payments for the current month: count of settled payments, gross settled volume, total combined fees charged, total OweMe commission kept. Currently derived client-side by filtering fixture rows on a hardcoded '2026-07' month prefix; needs a server aggregate scoped to a month parameter.",
+      "entities": ["LinkPayment"],
+      "fields": ["settledCount", "volumeKobo", "feesChargedKobo", "commissionKeptKobo", "month"],
+      "filters/actions": "Scoped by month; only status=settled contributes",
+      "adminRole": "both"
+    },
+    {
+      "id": "pay-links-need-3",
+      "kind": "read",
+      "summary": "List payment-processor webhook events (Paystack-style types like charge.success, charge.failed, transfer.success, transfer.failed, refund.processed) with delivery-processing outcome, plus an error count for the header subtitle.",
+      "entities": ["WebhookEvent"],
+      "fields": ["id", "time", "eventType", "reference", "processed"],
+      "filters/actions": "Filter by processed status: all | ok | error; error count surfaced as a summary figure",
+      "adminRole": "both"
+    },
+    {
+      "id": "pay-links-need-4",
+      "kind": "action",
+      "summary": "Replay a failed webhook event: re-run processing for an event whose processed state is 'error'; on success its state becomes 'ok'. UI uses a two-click confirm (Replay -> Confirm replay). Per conventions this is a support-resolvable action ('replay a webhook') and, being an admin WRITE, must record to admin_audit_log.",
+      "entities": ["WebhookEvent", "AdminAuditLog"],
+      "fields": ["id", "processed"],
+      "filters/actions": "Only valid for events with processed=error; idempotent replay preferred; audit-logged",
+      "adminRole": "both"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "pay-links-surf-1",
+      "surface": "Stat card row (Link payments this month, Volume, Combined fees charged, OweMe commission kept)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:93-104,161-184 - values reduced from payLinksDemoData.linkPayments filtered on hardcoded p.time.startsWith(\"2026-07\"), rendered as live StatCards"
+    },
+    {
+      "id": "pay-links-surf-2",
+      "surface": "Link payments DataTable with fee-split columns",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:17,83,191-195 - rows={payments} where payments = payLinksDemoData.linkPayments imported from lib/fixtures/payLinks.ts:24"
+    },
+    {
+      "id": "pay-links-surf-3",
+      "surface": "Webhook events DataTable",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:85-87,218-223 - useState seeded from payLinksDemoData.webhookEvents (lib/fixtures/payLinks.ts:134), rendered as live events"
+    },
+    {
+      "id": "pay-links-surf-4",
+      "surface": "Webhook events filter Select (All events / Ok only / Errors only)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:206-215 - controlled Select filtering only the local fixture-seeded events array (visibleEvents, line 106-108); no backend query"
+    },
+    {
+      "id": "pay-links-surf-5",
+      "surface": "Replay / Confirm replay button on error webhook rows",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:111-120,143-150 - replayEvent() confirm flow flips the event to processed:\"ok\" in local useState only; no network call, so a mock-fixture action, not wired"
+    },
+    {
+      "id": "pay-links-surf-6",
+      "surface": "Webhook section subtitle error counter (\"N events failed processing\" / \"All events processed\")",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:109,200-204 - errorCount computed from the local fixture-seeded events array and rendered as a live status line"
+    },
+    {
+      "id": "pay-links-surf-7",
+      "surface": "Page header (title \"Pay links\", subtitle \"Link payments, fee split and webhook delivery for July 2026\")",
+      "liveness": "static",
+      "evidence": "page.tsx:156-159 - literal copy; note the month is hardcoded rather than derived (see anomalies)"
+    },
+    {
+      "id": "pay-links-surf-8",
+      "surface": "EmptyState for webhook filter with no matches",
+      "liveness": "static",
+      "evidence": "page.tsx:225-229 - fixed icon/title/body copy shown when visibleEvents is empty"
+    },
+    {
+      "id": "pay-links-surf-9",
+      "surface": "Internal-split explainer subtitle on Link payments SectionCard",
+      "liveness": "static",
+      "evidence": "page.tsx:187-189 - literal help copy: \"Users see one combined fee. The commission and processor split below is internal.\""
+    }
+  ]
+}

@@ -1,0 +1,766 @@
+{
+  "generatedAt": "2026-07-20",
+  "generatedBy": "admin-pipeline triage classifier",
+  "inputs": [
+    ".pipeline/admin/protected-registry.json (frozen 2026-07-20, 54 endpoints, 15 models)",
+    ".pipeline/admin/app-features.json",
+    ".pipeline/admin/conventions.md",
+    ".pipeline/admin/fragments/ (14 fragments: login, overview, businesses, business-detail, debts, reminders, billing, credits, pay-links, payouts, auth-monitor, ai-usage, audit-log, admins)"
+  ],
+  "needs": [
+    {
+      "id": "login-need-1",
+      "fromScreens": ["login"],
+      "summary": "Authenticate an admin with email + password and establish an admin session.",
+      "classification": "NEW",
+      "evidence": "No AdminUser table or /admin/auth/* route exists (registry modelList has 15 models, none admin); conventions.md mandates a new POST /admin/auth/login with ADMIN_JWT_SECRET, separate from user OTP auth.",
+      "targetResource": "AdminUser (new) + admin auth endpoints"
+    },
+    {
+      "id": "login-need-2",
+      "fromScreens": ["login"],
+      "summary": "Read the authenticated admin's own identity (name, email, role, org).",
+      "classification": "NEW",
+      "evidence": "AdminUser does not exist; the registry's GET /me serves Staff users under the user JWT guard, which cross-rejects admin tokens by design (conventions.md).",
+      "targetResource": "AdminUser (new) + admin me endpoint"
+    },
+    {
+      "id": "overview-need-1",
+      "fromScreens": ["overview"],
+      "summary": "Platform-wide counts: total registered businesses and active paid subscriptions.",
+      "classification": "EXTEND",
+      "evidence": "Business and Subscription exist in the registry schema, but every read (GET /business, GET /subscription) is tenant-self-scoped; a cross-tenant admin aggregate is required.",
+      "targetResource": "Business, Subscription"
+    },
+    {
+      "id": "overview-need-2",
+      "fromScreens": ["overview"],
+      "summary": "Current MRR in kobo across the rev 2 five-plan ladder including enterprise band amounts.",
+      "classification": "EXTEND",
+      "evidence": "Subscription + Plan.pricePerMonth exist for flat-tier MRR; caveat: enterprise band premiums have no stored price anywhere (only Business.bvumCeilingOverride, a ceiling not a price), so that component needs a pricing-source ruling.",
+      "targetResource": "Subscription, Plan"
+    },
+    {
+      "id": "overview-need-3",
+      "fromScreens": ["overview"],
+      "summary": "Credits burned in the current calendar month across all businesses.",
+      "classification": "EXTEND",
+      "evidence": "CreditLedger exists per business (balance/monthlyGrant/periodStart, registry schema); there are no per-entry burn rows, but month burn is derivable from grant-vs-balance across ledgers.",
+      "targetResource": "CreditLedger"
+    },
+    {
+      "id": "overview-need-4",
+      "fromScreens": ["overview"],
+      "summary": "Monthly pay-link recovery gross and OweMe commission share, integer kobo.",
+      "classification": "EXTEND",
+      "evidence": "Pay-link recoveries are Payment rows with method 'Paystack link' (registry sideEffects, webhooks.service.ts:81-131); commission is not persisted and must be derived from the 1% cap N500 formula in pay-link-fees.ts.",
+      "targetResource": "Payment"
+    },
+    {
+      "id": "overview-need-5",
+      "fromScreens": ["overview"],
+      "summary": "Weekly pay-link recovery time series, 12 weeks.",
+      "classification": "EXTEND",
+      "evidence": "Payment rows with method 'Paystack link' exist and carry createdAt; weekly grouping is a new admin aggregate over an existing resource.",
+      "targetResource": "Payment"
+    },
+    {
+      "id": "overview-need-6",
+      "fromScreens": ["overview"],
+      "summary": "Business count per plan across the five-tier ladder.",
+      "classification": "EXTEND",
+      "evidence": "Business.plan exists (canonical starter|market|business|wholesale|enterprise, registry schema); only self-scoped reads exist today, so a cross-tenant group-by is a new admin endpoint.",
+      "targetResource": "Business"
+    },
+    {
+      "id": "overview-need-7",
+      "fromScreens": ["overview"],
+      "summary": "Recent cross-domain platform event feed (registrations, upgrades, renewals, bundle purchases, BVUM ceiling hits, payout verifications).",
+      "classification": "NEW",
+      "evidence": "No PlatformEvent or event-stream table exists among the registry's 15 models; this needs a new persisted store or a union view over Business/Subscription/BillingTransaction/Payment, which humans must rule on.",
+      "targetResource": "PlatformEvent (new store or union view)"
+    },
+    {
+      "id": "businesses-need-1",
+      "fromScreens": ["businesses"],
+      "summary": "Paginated, filterable cross-tenant list of all businesses with plan, BVUM, credits, staff count, join date, status.",
+      "classification": "EXTEND",
+      "evidence": "Business/Plan/CreditLedger/Staff all exist but only behind self-scoped endpoints; caveat: status 'test' depends on the planned new test flag and status 'paused' has NO backend basis at all (no suspension state anywhere, see gap-5).",
+      "targetResource": "Business (+ Plan, CreditLedger, Staff joins)"
+    },
+    {
+      "id": "businesses-need-2",
+      "fromScreens": ["businesses"],
+      "summary": "Platform-wide total business count for subtitle and filtered counts.",
+      "classification": "EXTEND",
+      "evidence": "Satisfied by the unfiltered total in the same admin paginated envelope ({data, page, total} per conventions.md); no separate resource involved.",
+      "targetResource": "Business"
+    },
+    {
+      "id": "businesses-need-3",
+      "fromScreens": ["businesses"],
+      "summary": "Stable Business.id usable as the detail navigation key.",
+      "classification": "EXTEND",
+      "evidence": "Business.id exists (UUIDv7, registry schema) and arrives in the same admin list payload as businesses-need-1; no additional call implied.",
+      "targetResource": "Business"
+    },
+    {
+      "id": "business-detail-need-1",
+      "fromScreens": ["business-detail"],
+      "summary": "Single business profile by id: identity, plan, test flag, masked owner phone, seats, subscription status, renewal.",
+      "classification": "EXTEND",
+      "evidence": "Business/Subscription/Staff exist; GET /business and GET /staff are tenant-self-scoped so an admin by-id view is required; isTest depends on the new flag (business-detail-need-7).",
+      "targetResource": "Business, Subscription, Staff"
+    },
+    {
+      "id": "business-detail-need-2",
+      "fromScreens": ["business-detail"],
+      "summary": "BVUM value and effective ceiling including enterprise banding state.",
+      "classification": "EXTEND",
+      "evidence": "BvumService, Plan.bvumCeiling and Business.bvumCeilingOverride all exist (GET /bvum is self-scoped); band count and band price are not stored, only the resulting ceiling override, which the endpoint designer must reconcile.",
+      "targetResource": "Business.bvumCeilingOverride, Plan.bvumCeiling, BvumService"
+    },
+    {
+      "id": "business-detail-need-3",
+      "fromScreens": ["business-detail"],
+      "summary": "Current-cycle credit usage broken down by spend type (sends/parses/insights) plus grant, bonus credits, fair-use reference.",
+      "classification": "UNSURE",
+      "evidence": "CreditLedger stores only balance/grant/periodStart; no per-type burn events exist anywhere (voice debits leave no rows, insights endpoint is a 501 scaffold), so the sends/parses/insights breakdown has no persisted source. Human ruling: new debit-event log vs partial derivation from Reminder rows.",
+      "targetResource": "CreditLedger (aggregate only today)"
+    },
+    {
+      "id": "business-detail-need-4",
+      "fromScreens": ["business-detail"],
+      "summary": "Bundle purchases this month and the hard monthly bundle cap.",
+      "classification": "EXTEND",
+      "evidence": "BillingTransaction rows of kind 'credits-bundle' plus the 2-per-month hard cap enforced in billing.service (registry sideEffects) provide both figures.",
+      "targetResource": "BillingTransaction"
+    },
+    {
+      "id": "business-detail-need-5",
+      "fromScreens": ["business-detail"],
+      "summary": "Most recent debts for the business (customer, amount, status, created).",
+      "classification": "EXTEND",
+      "evidence": "Debt/Customer and the DebtView status derivation exist; GET /debts is self-scoped, so an admin per-business view is needed; caveat: dashboard status vocab open|part-paid|overdue|paid differs from the live derived vocabulary.",
+      "targetResource": "Debt, Customer"
+    },
+    {
+      "id": "business-detail-need-6",
+      "fromScreens": ["business-detail"],
+      "summary": "Plan catalog (5-tier ladder) for the force-plan select and labels/ceilings/grants.",
+      "classification": "EXTEND",
+      "evidence": "GET /plans exists but sits behind the user JWT guard (JWT_ACCESS_SECRET); admin tokens are cross-rejected by design, so an admin-scoped catalog read is required, not REUSE.",
+      "targetResource": "Plan"
+    },
+    {
+      "id": "business-detail-need-7",
+      "fromScreens": ["business-detail"],
+      "summary": "Mark or unmark the business as a test account.",
+      "classification": "NEW",
+      "evidence": "The test-account flag is a new additive column or side table (conventions.md test-account tooling power 1); no such flag exists in the registry schema.",
+      "targetResource": "test-account flag (new) on Business + admin_audit_log"
+    },
+    {
+      "id": "business-detail-need-8",
+      "fromScreens": ["business-detail"],
+      "summary": "Grant a positive integer number of bonus credits to the business.",
+      "classification": "EXTEND",
+      "evidence": "CreditLedger exists; the registry mandates admin grants go through creditCredits increment semantics to preserve carry-over (CreditLedger deleteSemantics note); new audit-logged admin write endpoint.",
+      "targetResource": "CreditLedger + admin_audit_log"
+    },
+    {
+      "id": "business-detail-need-9",
+      "fromScreens": ["business-detail"],
+      "summary": "Force the business onto a specific plan until next renewal.",
+      "classification": "EXTEND",
+      "evidence": "Business.plan and Subscription exist; registry sideEffects warn out-of-band plan edits diverge from Subscription, so the admin write must keep both in lockstep (sales provisioning path per conventions.md power 3).",
+      "targetResource": "Business.plan, Subscription + admin_audit_log"
+    },
+    {
+      "id": "business-detail-need-10",
+      "fromScreens": ["business-detail"],
+      "summary": "Increment/decrement enterprise extra-band count, changing ceiling and monthly price.",
+      "classification": "EXTEND",
+      "evidence": "Business.bvumCeilingOverride is the live banding mechanism (registry schema: 'rev 2 enterprise banding, sales-provisioned'); band count and band price are not persisted, so the bands-to-override mapping is design work for the endpoint designer.",
+      "targetResource": "Business.bvumCeilingOverride + admin_audit_log"
+    },
+    {
+      "id": "business-detail-need-11",
+      "fromScreens": ["business-detail"],
+      "summary": "Reset a test business: clear debts, zero credit spend, remove bonus credits.",
+      "classification": "NEW",
+      "evidence": "A hard wipe has no existing endpoint and contradicts every soft-delete rule in the registry; conventions.md approves it ONLY behind the new test flag (power 4), which itself is new.",
+      "targetResource": "test-only reset endpoint (new) over Debt/CreditLedger + admin_audit_log"
+    },
+    {
+      "id": "business-detail-need-12",
+      "fromScreens": ["business-detail"],
+      "summary": "Read admin action log entries targeting this business.",
+      "classification": "NEW",
+      "evidence": "admin_audit_log is an owner-approved NEW table (conventions.md); this is its per-target read side and no such table exists in the registry.",
+      "targetResource": "admin_audit_log (new)"
+    },
+    {
+      "id": "debts-need-1",
+      "fromScreens": ["debts"],
+      "summary": "Cross-tenant paged debts list joining business name and minimised customer identity, with reminders count and days-to-recovery.",
+      "classification": "EXTEND",
+      "evidence": "Debt/DebtView derivations exist (GET /debts is self-scoped); remindersSent is countable from Reminder rows and daysToRecovery derivable from Payment timestamps; server-side phone minimisation is an admin-view obligation per the fragment's privacy note.",
+      "targetResource": "Debt, Business, Customer"
+    },
+    {
+      "id": "debts-need-2",
+      "fromScreens": ["debts"],
+      "summary": "Cross-tenant recovery aggregates: open remaining, recovered this month, overdue count, avg days-to-recovery.",
+      "classification": "EXTEND",
+      "evidence": "All four figures derive from existing Debt and Payment rows; cross-tenant scope makes this a new admin aggregate endpoint (the app-side GET /dashboard equivalents are tenant-scoped).",
+      "targetResource": "Debt, Payment"
+    },
+    {
+      "id": "debts-need-3",
+      "fromScreens": ["debts"],
+      "summary": "Cross-tenant recent payments feed with business name, amount, method, timestamp.",
+      "classification": "EXTEND",
+      "evidence": "Payment rows exist with method recorded verbatim; caveat: the dashboard's method vocabulary 'pay link|cash|transfer' will not match live verbatim client labels plus 'Paystack link' (registry Payment shape).",
+      "targetResource": "Payment, Business"
+    },
+    {
+      "id": "reminders-need-1",
+      "fromScreens": ["reminders"],
+      "summary": "Monthly reminder-send stats: sends, delivered, SMS-only count, SMS cost, credits-per-send.",
+      "classification": "UNSURE",
+      "evidence": "Sends are countable from Reminder rows, but 'delivered' does not exist (live statuses are scheduled|sent|failed and BulkSMS dispatch is fire-and-forget with no delivery receipts) and SMS route cost is tracked nowhere. Human ruling: add delivery-report and cost capture, or degrade the cards to what exists.",
+      "targetResource": "Reminder (partial); delivery/cost source undecided"
+    },
+    {
+      "id": "reminders-need-2",
+      "fromScreens": ["reminders"],
+      "summary": "Recent reminder sends across businesses with channel, step, status, route cost.",
+      "classification": "EXTEND",
+      "evidence": "Reminder rows exist and a cross-tenant admin list is a straightforward new view; caveats: status vocab mismatch (queued/delivered vs scheduled/sent/failed), and 'step' plus costKobo have no stored source (schedule steps are derived on the fly, cost untracked).",
+      "targetResource": "Reminder, Business"
+    },
+    {
+      "id": "reminders-need-3",
+      "fromScreens": ["reminders"],
+      "summary": "Average SMS route cost weekly time series (12 weeks).",
+      "classification": "ORPHAN",
+      "evidence": "No SMS cost data exists anywhere in the backend (no cost fields, no provider-billing capture in the registry) and no app feature tracks it; there is no basis in backend or app, so humans must rule.",
+      "targetResource": "none (no basis)"
+    },
+    {
+      "id": "reminders-need-4",
+      "fromScreens": ["reminders"],
+      "summary": "Retry a failed reminder send from the admin dashboard.",
+      "classification": "EXTEND",
+      "evidence": "POST /reminders/:id/retry exists but is tenant-self-scoped user auth, so a cross-tenant admin retry is EXTEND not REUSE; registry sideEffects warn the retry re-debits 5 trader credits and re-dispatches a real SMS, and conventions require audit logging.",
+      "targetResource": "Reminder + admin_audit_log"
+    },
+    {
+      "id": "billing-need-1",
+      "fromScreens": ["billing"],
+      "summary": "Cross-tenant list of paid subscriptions with plan, price, source, period end, state.",
+      "classification": "EXTEND",
+      "evidence": "Subscription rows exist (GET /subscription self-scoped); caveats: no 'source' field is persisted anywhere (platform is seen at verify time only) and the dashboard state vocab active|grace|canceled cannot represent live none|pending|gracePeriod|expired states.",
+      "targetResource": "Subscription, Business, Plan"
+    },
+    {
+      "id": "billing-need-2",
+      "fromScreens": ["billing"],
+      "summary": "Current-month billing transactions with store-fee breakdown.",
+      "classification": "EXTEND",
+      "evidence": "BillingTransaction is the live append-only ledger; storeFeeKobo/netKobo are not stored (webhook-recorded bundle rows even carry amount 0 per the registry), so the fee breakdown needs derivation rules or new capture that humans must approve.",
+      "targetResource": "BillingTransaction, Business"
+    },
+    {
+      "id": "billing-need-3",
+      "fromScreens": ["billing"],
+      "summary": "Headline billing aggregates: active count, grace count, MRR, store fees this month.",
+      "classification": "EXTEND",
+      "evidence": "Derivable from Subscription and BillingTransaction; the fragment itself notes aggregates MUST be server-side once lists paginate, matching the admin pagination convention.",
+      "targetResource": "Subscription, BillingTransaction"
+    },
+    {
+      "id": "credits-need-1",
+      "fromScreens": ["credits"],
+      "summary": "Platform-wide credits granted this month plus month label.",
+      "classification": "EXTEND",
+      "evidence": "CreditLedger.monthlyGrant exists per business (lazily refilled, registry sideEffects); the fragment's 'CreditGrant' entity maps onto this existing ledger, summed cross-tenant.",
+      "targetResource": "CreditLedger"
+    },
+    {
+      "id": "credits-need-2",
+      "fromScreens": ["credits"],
+      "summary": "Monthly credit burn grouped by action type (sends/voice/insights) with per-event costs.",
+      "classification": "UNSURE",
+      "evidence": "Same missing source as business-detail-need-3: no per-event burn rows exist (voice parses leave no persisted trace, insights unwired), so type-level burn cannot be produced from the registry as-is. Human ruling: new debit-event log vs derivation.",
+      "targetResource": "CreditLedger (aggregate only today)"
+    },
+    {
+      "id": "credits-need-3",
+      "fromScreens": ["credits"],
+      "summary": "Heaviest credit users per business with plan, grant, fair-use flag, used, bundles vs cap.",
+      "classification": "EXTEND",
+      "evidence": "CreditLedger (grant/balance, -1 fair-use), Business.plan and BillingTransaction bundle counts all exist; cross-tenant ranking is a new admin view.",
+      "targetResource": "CreditLedger, Business, BillingTransaction"
+    },
+    {
+      "id": "credits-need-4",
+      "fromScreens": ["credits"],
+      "summary": "Monthly bundle purchase history with SKU, credits, price.",
+      "classification": "EXTEND",
+      "evidence": "BillingTransaction rows of kind 'credits-bundle' carry productId/label/createdAt; caveat: amount is 0 on webhook-recorded rows so priceKobo needs a bundle-catalog join, and credit counts derive from the SKU pattern oweme_credits_(n).",
+      "targetResource": "BillingTransaction, bundle catalog"
+    },
+    {
+      "id": "credits-need-5",
+      "fromScreens": ["credits"],
+      "summary": "Credits configuration constants: bundle cap, per-event costs, SKU catalog, per-plan grants.",
+      "classification": "EXTEND",
+      "evidence": "Every constant exists in live code (src/billing/bundle-catalog.ts, CREDIT_WEIGHTS, the 2-bundle cap in billing.service, Plan.creditsPerMonth); an admin config read exposes them instead of dashboard hardcoding.",
+      "targetResource": "Plan + live config constants"
+    },
+    {
+      "id": "pay-links-need-1",
+      "fromScreens": ["pay-links"],
+      "summary": "Link payments list with server-authoritative fee split (combined fee, commission, processor share) and status.",
+      "classification": "EXTEND",
+      "evidence": "Pay-link payments are Payment rows (method 'Paystack link'); the fee split is computed at link creation (pay-link-fees.ts) but never persisted per payment, and no pending/failed payment rows exist since the webhook records successes only; those caveats need design/human attention.",
+      "targetResource": "Payment, Business"
+    },
+    {
+      "id": "pay-links-need-2",
+      "fromScreens": ["pay-links"],
+      "summary": "Monthly aggregates over settled link payments: count, volume, fees, commission kept.",
+      "classification": "EXTEND",
+      "evidence": "Derivable from Payment rows with method 'Paystack link' scoped by month; fee/commission components derived from the live fee formulas since they are not stored.",
+      "targetResource": "Payment"
+    },
+    {
+      "id": "pay-links-need-3",
+      "fromScreens": ["pay-links"],
+      "summary": "List payment-processor webhook events with processing outcome and error count.",
+      "classification": "NEW",
+      "evidence": "No webhook event log exists: POST /webhooks/paystack verifies, processes and discards (registry webhooks.service evidence); a persisted WebhookEvent store is a new resource.",
+      "targetResource": "WebhookEvent (new)"
+    },
+    {
+      "id": "pay-links-need-4",
+      "fromScreens": ["pay-links"],
+      "summary": "Replay a failed webhook event.",
+      "classification": "NEW",
+      "evidence": "Replay requires the new webhook event store from pay-links-need-3; conventions.md pre-approves 'replay a webhook' as a support-resolvable action, audit-logged.",
+      "targetResource": "WebhookEvent (new) + admin_audit_log"
+    },
+    {
+      "id": "payouts-need-1",
+      "fromScreens": ["payouts"],
+      "summary": "List trader payout accounts with bank details, status, and settlement aggregates.",
+      "classification": "EXTEND",
+      "evidence": "PayoutAccount and Business.paystackSubaccount exist (self-scoped GET/PUT); caveats: no status or settlement fields are stored anywhere, and NUBAN must arrive masked or role-gated server-side per the fragment note.",
+      "targetResource": "PayoutAccount, Business"
+    },
+    {
+      "id": "payouts-need-2",
+      "fromScreens": ["payouts"],
+      "summary": "Aggregate payout/settlement health stats (accounts set up, active subaccounts, settled this month, pending, failed resolutions).",
+      "classification": "UNSURE",
+      "evidence": "Account counts are derivable from PayoutAccount rows, but settled/pending settlement figures and failed-resolution counts have no persisted source (settlement happens provider-side; resolve failures return 422 and are never stored). Human ruling: Paystack settlement integration vs degrading the cards.",
+      "targetResource": "PayoutAccount (partial); settlement source undecided"
+    },
+    {
+      "id": "auth-monitor-need-1",
+      "fromScreens": ["auth-monitor"],
+      "summary": "Today's OTP KPIs: requests, delivery success pct, failed verifications, rate-limit blocks.",
+      "classification": "UNSURE",
+      "evidence": "OtpCode rows are consumables not a log (hard-deleted on successful verify per registry deleteSemantics), delivery outcomes are never captured (fire-and-forget BulkSMS) and throttle blocks are silent and unpersisted. Human ruling: add a persistent OTP request/delivery log or degrade the KPIs.",
+      "targetResource": "OtpCode (structurally insufficient)"
+    },
+    {
+      "id": "auth-monitor-need-2",
+      "fromScreens": ["auth-monitor"],
+      "summary": "14-day OTP request volume series.",
+      "classification": "UNSURE",
+      "evidence": "Same source defect as auth-monitor-need-1: verified requests vanish (rows hard-deleted on verify), so a series computed off OtpCode systematically undercounts; depends on the same OTP-log ruling.",
+      "targetResource": "OtpCode (structurally insufficient)"
+    },
+    {
+      "id": "auth-monitor-need-3",
+      "fromScreens": ["auth-monitor"],
+      "summary": "Recent OTP requests list with delivery outcome, attempts, rate-limited flag.",
+      "classification": "UNSURE",
+      "evidence": "OtpCode carries phone/createdAt/attempts, but rows for successful sign-ins are deleted and delivery/rateLimited are unrecorded; same OTP-log ruling as need-1 decides whether this list can exist truthfully.",
+      "targetResource": "OtpCode (structurally insufficient)"
+    },
+    {
+      "id": "auth-monitor-need-4",
+      "fromScreens": ["auth-monitor"],
+      "summary": "List test-flagged businesses' phones with current OTP expiry state.",
+      "classification": "NEW",
+      "evidence": "Depends on the new test-account flag (conventions.md power 2, server-side filter mandatory); OtpCode.expiresAt is readable for test-flagged phones once the flag exists.",
+      "targetResource": "test-account flag (new) + OtpCode"
+    },
+    {
+      "id": "auth-monitor-need-5",
+      "fromScreens": ["auth-monitor"],
+      "summary": "Reveal the current OTP code for one test-flagged phone, on demand.",
+      "classification": "NEW",
+      "evidence": "Conventions-approved power, but OtpCode stores only codeHash (registry ADMIN RISK: 'codes cannot be read from this table as-is'), so the schema agent must resolve reveal-ability, e.g. plaintext retained only for test-flagged numbers; audit-logged on-demand read per the fragment.",
+      "targetResource": "test-account flag (new) + OtpCode schema change + admin_audit_log"
+    },
+    {
+      "id": "audit-log-need-1",
+      "fromScreens": ["audit-log"],
+      "summary": "Paginated, filterable list of admin audit entries with actor identity and target business.",
+      "classification": "NEW",
+      "evidence": "admin_audit_log is the owner-approved NEW table from conventions.md; no such table exists in the registry, and this is its primary read surface.",
+      "targetResource": "admin_audit_log (new), AdminUser (new), Business"
+    },
+    {
+      "id": "audit-log-need-2",
+      "fromScreens": ["audit-log"],
+      "summary": "List of admin users for the filter dropdown.",
+      "classification": "NEW",
+      "evidence": "AdminUser does not exist in the registry; enumeration for the dropdown comes with the new admin identity table.",
+      "targetResource": "AdminUser (new)"
+    },
+    {
+      "id": "audit-log-need-3",
+      "fromScreens": ["audit-log"],
+      "summary": "Append-only invariant on the audit store (no edit/delete surface).",
+      "classification": "NEW",
+      "evidence": "An invariant on the new admin_audit_log table, matching conventions.md's rule that every admin WRITE records actor/action/target/timestamp/diff; not an endpoint of its own.",
+      "targetResource": "admin_audit_log (new)"
+    },
+    {
+      "id": "admins-need-1",
+      "fromScreens": ["admins"],
+      "summary": "List all dashboard admin accounts including invited ones.",
+      "classification": "NEW",
+      "evidence": "AdminUser is a new table per conventions.md; status/invited semantics are part of its new design.",
+      "targetResource": "AdminUser (new)"
+    },
+    {
+      "id": "admins-need-2",
+      "fromScreens": ["admins"],
+      "summary": "Identify the currently signed-in admin for the You badge and self-disable guard.",
+      "classification": "NEW",
+      "evidence": "Same admin me read as login-need-2 against the new AdminUser table; server must also refuse self-disable per the fragment.",
+      "targetResource": "AdminUser (new)"
+    },
+    {
+      "id": "admins-need-3",
+      "fromScreens": ["admins"],
+      "summary": "Invite a new admin by email with a role; invite email delivered.",
+      "classification": "UNSURE",
+      "evidence": "AdminUser is new, but conventions.md specifies only email+password login plus an env-seeded first superadmin; no email-sending provider exists anywhere in OweMe-API and no invite/password-setup flow was ruled. Human question: is invite-by-email in scope for v1, or are additional admins provisioned directly (e.g. created with a password)?",
+      "targetResource": "AdminUser (new); email delivery mechanism undecided"
+    },
+    {
+      "id": "admins-need-4",
+      "fromScreens": ["admins"],
+      "summary": "Disable an active admin account.",
+      "classification": "NEW",
+      "evidence": "Status transition on the new AdminUser table; server-side self-disable refusal and audit logging required per the fragment and conventions.md.",
+      "targetResource": "AdminUser (new) + admin_audit_log"
+    },
+    {
+      "id": "admins-need-5",
+      "fromScreens": ["admins"],
+      "summary": "Re-enable a disabled admin account.",
+      "classification": "NEW",
+      "evidence": "Status transition on the new AdminUser table, audit-logged per conventions.md.",
+      "targetResource": "AdminUser (new) + admin_audit_log"
+    },
+    {
+      "id": "admins-need-6",
+      "fromScreens": ["admins"],
+      "summary": "Revoke a pending invite, removing the invited account.",
+      "classification": "NEW",
+      "evidence": "Operation on the new AdminUser table; delete-vs-terminal-state semantics for a never-activated account are a schema-agent/human call since the registry's delete conventions cover only app entities.",
+      "targetResource": "AdminUser (new) + admin_audit_log"
+    },
+    {
+      "id": "ai-usage-need-1",
+      "fromScreens": ["ai-usage"],
+      "summary": "Monthly AI headline stats: total parses, on-device vs fallback split, model spend estimate.",
+      "classification": "UNSURE",
+      "evidence": "No voice-parse events are persisted (POST /voice/parse debits the ledger and returns; no event table in the registry) and on-device parses never reach the backend at all (client-side heuristic per app-features). Human ruling: instrument the live voice path (touches protected code) and/or accept that on-device share is unknowable server-side; model spend has no cost source either.",
+      "targetResource": "none today; VoiceParseEvent instrumentation undecided"
+    },
+    {
+      "id": "ai-usage-need-2",
+      "fromScreens": ["ai-usage"],
+      "summary": "Weekly voice-parse volume series, 12 weeks.",
+      "classification": "UNSURE",
+      "evidence": "Same missing parse-event source as ai-usage-need-1; nothing in the registry records per-parse events to aggregate.",
+      "targetResource": "none today; VoiceParseEvent instrumentation undecided"
+    },
+    {
+      "id": "ai-usage-need-3",
+      "fromScreens": ["ai-usage"],
+      "summary": "Per-business monthly AI rollup: parses, on-device share, insights, credits debited.",
+      "classification": "UNSURE",
+      "evidence": "Same missing parse-event source; additionally needs insight events while GET /insights/dashboard and GET /customers/:id/risk are 501 scaffolds that debit nothing.",
+      "targetResource": "none today; instrumentation undecided"
+    },
+    {
+      "id": "ai-usage-need-4",
+      "fromScreens": ["ai-usage"],
+      "summary": "Recent fallback parse log with anonymised transcript snippets.",
+      "classification": "UNSURE",
+      "evidence": "Transcripts are never stored anywhere today (a privacy-positive fact); logging them for an admin feed is a new data-retention and anonymisation decision that humans must rule on before any resource is designed.",
+      "targetResource": "none today; transcript retention undecided"
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap-1",
+      "backendSurface": ["POST /auth/refresh", "POST /auth/logout", "RefreshToken (entity)"],
+      "summary": "User session security has zero dashboard coverage: refresh-token rotation chains, reuse-detection whole-chain revocations and logout revocations are all recorded (RefreshToken soft-revoke rows are the registry's stated reuse-detection evidence) but no fragment monitors token-reuse incidents or session revocations. Security/compliance-shaped.",
+      "priority": true,
+      "recommendation": "add-to-scope"
+    },
+    {
+      "id": "gap-2",
+      "backendSurface": ["POST /webhooks/iap", "Subscription.entitlementState lifecycle (none|pending|active|gracePeriod|expired)"],
+      "summary": "IAP webhook processing and entitlement lifecycle transitions are unmonitored by any fragment: fail-closed downgrades to starter (EXPIRED/CANCELLED/DID_FAIL_TO_RENEW/REVOKE/GRACE_PERIOD_EXPIRED) silently change trader capabilities, and the billing screen's state vocabulary (active|grace|canceled) cannot even represent pending/expired/none. Money- and lifecycle-shaped.",
+      "priority": true,
+      "recommendation": "add-to-scope"
+    },
+    {
+      "id": "gap-3",
+      "backendSurface": ["GET /notifications", "POST /notifications/mark-all-read", "GET /notification-preferences", "PUT /notification-preferences", "Notification (entity)", "NotificationPreferences (entity)"],
+      "summary": "The notification feed and push preferences are referenced by zero fragments. The registry also records that no live code path ever creates Notification rows, so there is currently little to monitor.",
+      "priority": false,
+      "recommendation": "ignore"
+    },
+    {
+      "id": "gap-4",
+      "backendSurface": ["GET /sync", "GET /sync/status", "POST /debts/:id/undo-payment", "DELETE /customers/:id (tombstone lifecycle)"],
+      "summary": "Offline-first sync health has zero dashboard coverage: no view of sync cursors, tombstones, or the registry-documented Payment hard-delete limitation (undo-payment produces no tombstone and silently desyncs offline devices). Money-shaped because it concerns payment records disappearing from devices.",
+      "priority": true,
+      "recommendation": "add-to-scope"
+    },
+    {
+      "id": "gap-5",
+      "backendSurface": ["Business (entity): no suspend/pause state, endpoint, or guard exists anywhere in the registry"],
+      "summary": "Reverse gap flagged under the lifecycle rule: the businesses screen filters and renders status 'paused', but the backend has no suspension mechanism at all. Humans must rule: build a suspension lifecycle (new state + enforcement) or cut the paused status from the dashboard.",
+      "priority": true,
+      "recommendation": "add-to-scope"
+    }
+  ],
+  "gapSweep": {
+    "note": "Proof of iteration: every one of the registry's 54 endpoints checked against fragment coverage (fragments reference domains/entities, not literal paths, so coverage is judged at data-domain level). Entities swept below the endpoints.",
+    "endpoints": [
+      { "endpoint": "POST /auth/request-otp", "referencedBy": ["auth-monitor"] },
+      { "endpoint": "POST /auth/verify-otp", "referencedBy": ["auth-monitor"] },
+      { "endpoint": "POST /auth/refresh", "referencedBy": [], "gap": "gap-1" },
+      { "endpoint": "POST /auth/logout", "referencedBy": [], "gap": "gap-1" },
+      { "endpoint": "GET /me", "referencedBy": [], "note": "MeResponse data (Staff + Business) is domain-covered by businesses/business-detail; user self endpoint itself needs no admin mirror" },
+      { "endpoint": "GET /business", "referencedBy": ["businesses", "business-detail", "overview"] },
+      { "endpoint": "PUT /business", "referencedBy": ["business-detail"], "note": "profile fields it writes are displayed; no admin write over it requested" },
+      { "endpoint": "GET /plans", "referencedBy": ["business-detail", "credits", "overview"] },
+      { "endpoint": "GET /staff", "referencedBy": ["businesses", "business-detail"], "note": "counts/seats only; per-staff roster is unshown on any screen" },
+      { "endpoint": "POST /staff", "referencedBy": ["businesses"], "note": "invite lifecycle unmonitored beyond seat counts" },
+      { "endpoint": "PATCH /staff/:id", "referencedBy": ["businesses"], "note": "deactivation states unshown" },
+      { "endpoint": "GET /usage", "referencedBy": ["overview", "businesses", "business-detail", "credits"] },
+      { "endpoint": "GET /customers", "referencedBy": ["debts", "business-detail"] },
+      { "endpoint": "GET /customers/:id", "referencedBy": ["debts", "business-detail"] },
+      { "endpoint": "POST /customers", "referencedBy": ["debts", "business-detail"] },
+      { "endpoint": "DELETE /customers/:id", "referencedBy": [], "gap": "gap-4", "note": "customer soft-delete/tombstone lifecycle unmonitored" },
+      { "endpoint": "GET /customers/:id/activity", "referencedBy": ["debts"], "note": "activity domain covered by debts/payments feeds" },
+      { "endpoint": "GET /customers/:id/risk", "referencedBy": ["ai-usage"], "note": "501 scaffold; insight-credit domain covered by ai-usage needs" },
+      { "endpoint": "GET /notifications", "referencedBy": [], "gap": "gap-3" },
+      { "endpoint": "POST /notifications/mark-all-read", "referencedBy": [], "gap": "gap-3" },
+      { "endpoint": "GET /notification-preferences", "referencedBy": [], "gap": "gap-3" },
+      { "endpoint": "PUT /notification-preferences", "referencedBy": [], "gap": "gap-3" },
+      { "endpoint": "GET /banks", "referencedBy": ["payouts"] },
+      { "endpoint": "POST /payout-account/resolve", "referencedBy": ["payouts"] },
+      { "endpoint": "GET /payout-account", "referencedBy": ["payouts"] },
+      { "endpoint": "PUT /payout-account", "referencedBy": ["payouts"] },
+      { "endpoint": "GET /subscription", "referencedBy": ["billing", "overview", "business-detail"] },
+      { "endpoint": "POST /billing/verify-receipt", "referencedBy": ["billing", "credits"] },
+      { "endpoint": "GET /billing/history", "referencedBy": ["billing", "credits"] },
+      { "endpoint": "POST /voice/parse", "referencedBy": ["ai-usage"] },
+      { "endpoint": "GET /insights/dashboard", "referencedBy": ["ai-usage"], "note": "501 scaffold" },
+      { "endpoint": "GET /debts", "referencedBy": ["debts", "business-detail"] },
+      { "endpoint": "GET /debts/:id", "referencedBy": ["debts"] },
+      { "endpoint": "POST /debts", "referencedBy": ["debts", "businesses"], "note": "BVUM_CEILING enforcement surfaces via businesses/business-detail meters" },
+      { "endpoint": "PATCH /debts/:id", "referencedBy": ["debts"] },
+      { "endpoint": "DELETE /debts/:id", "referencedBy": ["debts"], "note": "archive lifecycle partially covered by status vocab" },
+      { "endpoint": "POST /debts/:id/restore", "referencedBy": ["debts"] },
+      { "endpoint": "POST /debts/:id/pay-link", "referencedBy": ["pay-links", "overview"] },
+      { "endpoint": "GET /debts/:id/payments", "referencedBy": ["debts"] },
+      { "endpoint": "GET /debts/:id/reminders", "referencedBy": ["reminders"] },
+      { "endpoint": "GET /debts/:id/reminder-schedule", "referencedBy": ["reminders"], "note": "derived steps feed the dashboard's 'step' column expectation" },
+      { "endpoint": "POST /debts/:id/payments", "referencedBy": ["debts"] },
+      { "endpoint": "GET /payments/:id", "referencedBy": ["debts"] },
+      { "endpoint": "POST /debts/:id/undo-payment", "referencedBy": [], "gap": "gap-4", "note": "the only hard delete in the app surface; no fragment monitors it" },
+      { "endpoint": "GET /reminders", "referencedBy": ["reminders"] },
+      { "endpoint": "POST /reminders", "referencedBy": ["reminders"] },
+      { "endpoint": "POST /reminders/:id/retry", "referencedBy": ["reminders"] },
+      { "endpoint": "GET /bvum", "referencedBy": ["businesses", "business-detail", "overview"] },
+      { "endpoint": "GET /dashboard", "referencedBy": ["overview"], "note": "tenant recovery aggregates; overview needs the cross-tenant analog" },
+      { "endpoint": "GET /activity", "referencedBy": ["overview"] },
+      { "endpoint": "GET /sync", "referencedBy": [], "gap": "gap-4" },
+      { "endpoint": "GET /sync/status", "referencedBy": [], "gap": "gap-4" },
+      { "endpoint": "POST /webhooks/paystack", "referencedBy": ["pay-links", "overview", "debts"] },
+      { "endpoint": "POST /webhooks/iap", "referencedBy": [], "gap": "gap-2" }
+    ],
+    "entities": [
+      { "entity": "Business", "referencedBy": ["overview", "businesses", "business-detail", "debts", "billing", "credits", "pay-links", "payouts", "auth-monitor", "ai-usage", "audit-log"] },
+      { "entity": "Staff", "referencedBy": ["businesses", "business-detail"] },
+      { "entity": "OtpCode", "referencedBy": ["auth-monitor"] },
+      { "entity": "RefreshToken", "referencedBy": [], "gap": "gap-1" },
+      { "entity": "Customer", "referencedBy": ["debts", "business-detail"] },
+      { "entity": "Debt", "referencedBy": ["debts", "business-detail", "overview"] },
+      { "entity": "Payment", "referencedBy": ["debts", "pay-links", "overview"] },
+      { "entity": "Reminder", "referencedBy": ["reminders", "debts"] },
+      { "entity": "Notification", "referencedBy": [], "gap": "gap-3" },
+      { "entity": "NotificationPreferences", "referencedBy": [], "gap": "gap-3" },
+      { "entity": "PayoutAccount", "referencedBy": ["payouts", "overview"] },
+      { "entity": "Plan", "referencedBy": ["overview", "businesses", "business-detail", "billing", "credits", "ai-usage"] },
+      { "entity": "Subscription", "referencedBy": ["overview", "billing", "business-detail"] },
+      { "entity": "BillingTransaction", "referencedBy": ["billing", "credits", "business-detail"] },
+      { "entity": "CreditLedger", "referencedBy": ["overview", "businesses", "business-detail", "credits", "reminders", "ai-usage"] }
+    ]
+  },
+  "surfaceLegend": {
+    "WIRE": "real feature, wrong plumbing; wire to the admin API when its need lands",
+    "HONEST-EMPTY": "keep the surface; until its backing data exists (or where the surface is already truthful static local content) it must render a truthful empty/local state, never fixture data",
+    "CUT": "recommend removal; humans rule"
+  },
+  "surfaces": [
+    { "id": "login-surf-1", "screenId": "login", "surface": "Sign-in form: controlled email and password inputs, submit button with spinner, submit handler", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "wire to the new POST /admin/auth/login; remove the setTimeout fake navigation" },
+    { "id": "login-surf-2", "screenId": "login", "surface": "Email input placeholder text", "liveness": "mock-fixture", "recommendation": "CUT", "note": "replace the personal-email fixture placeholder (excel@moxnafrica.com) with neutral static placeholder copy" },
+    { "id": "login-surf-3", "screenId": "login", "surface": "Inline error banner (missing email/password message)", "liveness": "static", "recommendation": "WIRE", "note": "keep local validation; the slot must also render server auth errors once wired" },
+    { "id": "login-surf-4", "screenId": "login", "surface": "Footer restricted-access copy interpolating the org name", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "serve org name from admin identity/config or demote to static copy" },
+    { "id": "login-surf-5", "screenId": "login", "surface": "Logo mark, OweMe Admin heading, and sign-in subtitle", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static branding; keep as-is" },
+    { "id": "overview-surf-1", "screenId": "overview", "surface": "Page header: title 'Overview' and subtitle", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "overview-surf-2", "screenId": "overview", "surface": "StatCard 'Registered businesses'", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "overview-surf-3", "screenId": "overview", "surface": "StatCard 'Active paid subscriptions' incl. derived paid-share percent sub-line", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "overview-surf-4", "screenId": "overview", "surface": "StatCard 'MRR'", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "enterprise band component pending pricing-source ruling (overview-need-2)" },
+    { "id": "overview-surf-5", "screenId": "overview", "surface": "StatCard 'Credits burned this month'", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "overview-surf-6", "screenId": "overview", "surface": "StatCard 'Recovered via pay links'", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "overview-surf-7", "screenId": "overview", "surface": "StatCard 'Pay link commission'", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "overview-surf-8", "screenId": "overview", "surface": "'Recovered per week' section: latest-week amount, week-over-week percent, 12-point Sparkline", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "overview-surf-9", "screenId": "overview", "surface": "'Businesses by plan' BarList (5 plan rows with counts)", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "overview-surf-10", "screenId": "overview", "surface": "'Recent activity' DataTable: business name, event Badge with tone, timestamp", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "backed by NEW platform event store (overview-need-7); render honest empty state until it exists" },
+    { "id": "businesses-surf-1", "screenId": "businesses", "surface": "PageHeader subtitle business count", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "businesses-surf-2", "screenId": "businesses", "surface": "SearchInput (search name or phone)", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "search must move server-side per businesses-need-1" },
+    { "id": "businesses-surf-3", "screenId": "businesses", "surface": "Plan filter Select", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "businesses-surf-4", "screenId": "businesses", "surface": "Status filter Select (All statuses / Active / Paused / Test)", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "'Paused' option has no backend basis (gap-5); pending that ruling it should be dropped or disabled" },
+    { "id": "businesses-surf-5", "screenId": "businesses", "surface": "Businesses DataTable", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "businesses-surf-6", "screenId": "businesses", "surface": "BVUM meter cell (usage vs ceiling with over state)", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "businesses-surf-7", "screenId": "businesses", "surface": "Credits cell (used / grant, fair use, over-grant highlighting)", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "businesses-surf-8", "screenId": "businesses", "surface": "Row click navigation to business detail", "liveness": "wired", "recommendation": "WIRE", "note": "navigation already real; keep" },
+    { "id": "businesses-surf-9", "screenId": "businesses", "surface": "EmptyState ('No businesses match')", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "businesses-surf-10", "screenId": "businesses", "surface": "PageHeader title 'Businesses' and column header labels", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "business-detail-surf-1", "screenId": "business-detail", "surface": "Business lookup from ?id= query param", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "remove the silent fallback to the first fixture record; unknown id must show a not-found state" },
+    { "id": "business-detail-surf-2", "screenId": "business-detail", "surface": "Page header: business name, id, joined date, plan badge, test badge", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "business-detail-surf-3", "screenId": "business-detail", "surface": "Profile card KvList (owner phone, joined, seats, subscription status, next renewal)", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "business-detail-surf-4", "screenId": "business-detail", "surface": "Scale (BVUM) meter with ceiling and over-ceiling warning", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "business-detail-surf-5", "screenId": "business-detail", "surface": "Enterprise band -/+ controls and price math", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "band price math needs a backend source (see overview-need-2 caveat)" },
+    { "id": "business-detail-surf-6", "screenId": "business-detail", "surface": "Credits meter with grant/fair-use reference and spend BarList (sends/parses/insights)", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "aggregate meter wireable now; per-type BarList pending business-detail-need-3 ruling; credit costs 5/1/4 must come from the config read, not hardcode" },
+    { "id": "business-detail-surf-7", "screenId": "business-detail", "surface": "Top-up bundles meter with monthly cap notice", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "business-detail-surf-8", "screenId": "business-detail", "surface": "Mark as test account / Remove test flag button", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "business-detail-surf-9", "screenId": "business-detail", "surface": "Grant credits form (number input, Confirm grant, Cancel)", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "business-detail-surf-10", "screenId": "business-detail", "surface": "Force plan select + apply button", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "business-detail-surf-11", "screenId": "business-detail", "surface": "Reset test business two-step confirm flow", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "server-side test-flag refusal is mandatory, UI gating alone is insufficient" },
+    { "id": "business-detail-surf-12", "screenId": "business-detail", "surface": "Action log panel", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "back with the admin_audit_log read (business-detail-need-12); drop the hardcoded 'excel.admin' identity" },
+    { "id": "business-detail-surf-13", "screenId": "business-detail", "surface": "Debts table / empty state", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "business-detail-surf-14", "screenId": "business-detail", "surface": "Suspense fallback and section help copy", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "debts-surf-1", "screenId": "debts", "surface": "Stat card row (Total open debt, Recovered this month, Overdue debts, Avg days to recovery)", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "aggregates must be server-side and month-relative, not the hardcoded 2026-07 prefix" },
+    { "id": "debts-surf-2", "screenId": "debts", "surface": "All debts DataTable", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "debts-surf-3", "screenId": "debts", "surface": "SearchInput 'Search business or customer'", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "debts-surf-4", "screenId": "debts", "surface": "Status filter Select (All statuses / Active / Overdue / Paid)", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "status vocab must be mapped to the live derived vocabulary" },
+    { "id": "debts-surf-5", "screenId": "debts", "surface": "Payments feed DataTable (business, amount, method, when)", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "debts-surf-6", "screenId": "debts", "surface": "EmptyState 'No debts match'", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "debts-surf-7", "screenId": "debts", "surface": "PageHeader title/subtitle and privacy footnote copy", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "debts-surf-8", "screenId": "debts", "surface": "Debts SectionCard subtitle count ('N of M debts')", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "reminders-surf-1", "screenId": "reminders", "surface": "Page header subtitle with covered month", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "derive the month, never hardcode" },
+    { "id": "reminders-surf-2", "screenId": "reminders", "surface": "Stat card: Sends this month", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "countable from Reminder rows today" },
+    { "id": "reminders-surf-3", "screenId": "reminders", "surface": "Stat card: Delivery rate", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "no delivery data exists (reminders-need-1 UNSURE); truthful placeholder until ruled" },
+    { "id": "reminders-surf-4", "screenId": "reminders", "surface": "Stat card: SMS cost this month", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "no cost data exists; pending reminders-need-1 ruling" },
+    { "id": "reminders-surf-5", "screenId": "reminders", "surface": "Stat card: Credits consumed by sends", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "derivable from metered send counts x the config credits-per-send" },
+    { "id": "reminders-surf-6", "screenId": "reminders", "surface": "Channel filter Select", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "reminders-surf-7", "screenId": "reminders", "surface": "Status filter Select", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "vocab must map to live scheduled|sent|failed" },
+    { "id": "reminders-surf-8", "screenId": "reminders", "surface": "Recent sends DataTable", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "delivery status, step and cost columns lack sources; render those columns honestly (or drop) pending rulings" },
+    { "id": "reminders-surf-9", "screenId": "reminders", "surface": "Retry button on failed rows", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "wire to admin retry (reminders-need-4); mind the re-debit and real-SMS side effect" },
+    { "id": "reminders-surf-10", "screenId": "reminders", "surface": "Empty state when filters match nothing", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "reminders-surf-11", "screenId": "reminders", "surface": "Cost per SMS trend Sparkline with callouts", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "backed by ORPHAN reminders-need-3; keep with truthful empty state only if humans rule cost tracking in, else cut" },
+    { "id": "reminders-surf-12", "screenId": "reminders", "surface": "Route-pricing narrative paragraph under the sparkline", "liveness": "mock-fixture", "recommendation": "CUT", "note": "fabricated cost analysis (invented June route switch) rendered as live ops narrative; no data source will back it" },
+    { "id": "billing-surf-1", "screenId": "billing", "surface": "Stat card row (Active subscriptions, MRR, Store fee this month, Failed renewals)", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "aggregates must come from the server once lists paginate" },
+    { "id": "billing-surf-2", "screenId": "billing", "surface": "Subscriptions table", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "source column has no persisted backend field; state vocab incomplete vs live entitlement states" },
+    { "id": "billing-surf-3", "screenId": "billing", "surface": "Subscriptions 'Filter by source' select", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "blocked until a source field exists or is ruled out" },
+    { "id": "billing-surf-4", "screenId": "billing", "surface": "Subscriptions 'Filter by state' select", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "extend options to the live entitlement state vocabulary" },
+    { "id": "billing-surf-5", "screenId": "billing", "surface": "Transactions table", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "store-fee/net columns need a derivation ruling (billing-need-2)" },
+    { "id": "billing-surf-6", "screenId": "billing", "surface": "Transactions search input (business, SKU or type)", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "billing-surf-7", "screenId": "billing", "surface": "Page header title and subtitle", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "billing-surf-8", "screenId": "billing", "surface": "Subscriptions empty state", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "billing-surf-9", "screenId": "billing", "surface": "Transactions empty state", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "credits-surf-1", "screenId": "credits", "surface": "Page header subtitle with month label", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "derive the month" },
+    { "id": "credits-surf-2", "screenId": "credits", "surface": "StatCard 'Credits granted this month'", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "credits-surf-3", "screenId": "credits", "surface": "StatCard 'Credits burned' with percent-of-granted sub", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "total burn derivable from ledgers; if the type breakdown ruling (credits-need-2) fails, the total still wires" },
+    { "id": "credits-surf-4", "screenId": "credits", "surface": "StatCard 'Sends share of burn' with voice/insights shares", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "per-type burn has no source (credits-need-2 UNSURE)" },
+    { "id": "credits-surf-5", "screenId": "credits", "surface": "StatCard 'Bundle revenue this month' with purchase count", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "revenue needs the bundle-catalog price join since webhook rows record amount 0" },
+    { "id": "credits-surf-6", "screenId": "credits", "surface": "'Burn by type' BarList", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "pending credits-need-2 ruling" },
+    { "id": "credits-surf-7", "screenId": "credits", "surface": "'Filter by plan' Select on Heaviest users card", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "credits-surf-8", "screenId": "credits", "surface": "'Heaviest users' DataTable", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "credits-surf-9", "screenId": "credits", "surface": "Heaviest users empty-state message", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "credits-surf-10", "screenId": "credits", "surface": "'Bundle purchases' DataTable", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "credits-surf-11", "screenId": "credits", "surface": "Card titles, column headers, and stat labels", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "pay-links-surf-1", "screenId": "pay-links", "surface": "Stat card row (Link payments this month, Volume, Combined fees charged, OweMe commission kept)", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "server aggregate with a month parameter, not a hardcoded 2026-07 prefix" },
+    { "id": "pay-links-surf-2", "screenId": "pay-links", "surface": "Link payments DataTable with fee-split columns", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "fee split must be server-authoritative" },
+    { "id": "pay-links-surf-3", "screenId": "pay-links", "surface": "Webhook events DataTable", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "backed by NEW webhook event store (pay-links-need-3); honest empty until it exists" },
+    { "id": "pay-links-surf-4", "screenId": "pay-links", "surface": "Webhook events filter Select", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "pay-links-surf-5", "screenId": "pay-links", "surface": "Replay / Confirm replay button on error webhook rows", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "wire to the NEW replay action, audit-logged" },
+    { "id": "pay-links-surf-6", "screenId": "pay-links", "surface": "Webhook section subtitle error counter", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "pay-links-surf-7", "screenId": "pay-links", "surface": "Page header title/subtitle with month", "liveness": "static", "recommendation": "WIRE", "note": "month is hardcoded 'July 2026'; derive it" },
+    { "id": "pay-links-surf-8", "screenId": "pay-links", "surface": "EmptyState for webhook filter with no matches", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "pay-links-surf-9", "screenId": "pay-links", "surface": "Internal-split explainer subtitle on Link payments SectionCard", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy matching the registry's disclosed-fee rule; keep as-is" },
+    { "id": "payouts-surf-1", "screenId": "payouts", "surface": "Stat card row (accounts set up, settled this month, pending settlements, failed resolutions)", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "account counts wireable; settlement/resolution cards pending payouts-need-2 ruling, honest-empty until then" },
+    { "id": "payouts-surf-2", "screenId": "payouts", "surface": "Payout accounts DataTable", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "settled/last-settlement columns pending ruling; NUBAN must arrive masked server-side" },
+    { "id": "payouts-surf-3", "screenId": "payouts", "surface": "SearchInput over business/bank/account name", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "payouts-surf-4", "screenId": "payouts", "surface": "Subaccount status Select filter", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "status states have no persisted source today; align options with what the admin view can truthfully report" },
+    { "id": "payouts-surf-5", "screenId": "payouts", "surface": "EmptyState 'No accounts match'", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "payouts-surf-6", "screenId": "payouts", "surface": "PageHeader title/subtitle", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "payouts-surf-7", "screenId": "payouts", "surface": "'How settlement works' explainer card (fee split copy)", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "keep as static explainer; UI pipeline should verify its example figures against the live fee formulas" },
+    { "id": "auth-monitor-surf-1", "screenId": "auth-monitor", "surface": "KPI stat card row (OTP requests today, delivery success, failed verifications, rate-limit blocks)", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "no truthful source exists for delivery/rate-limit KPIs and request counts are skewed by delete-on-verify; pending the OTP-log ruling (auth-monitor-need-1)" },
+    { "id": "auth-monitor-surf-2", "screenId": "auth-monitor", "surface": "OTP volume 14-day sparkline with total/average/peak summary", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "same OTP-log dependency" },
+    { "id": "auth-monitor-surf-3", "screenId": "auth-monitor", "surface": "Recent OTP requests DataTable", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "same OTP-log dependency; delivery and blocked columns unservable today" },
+    { "id": "auth-monitor-surf-4", "screenId": "auth-monitor", "surface": "SearchInput 'Search by phone digits'", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "control of a pending table; keep with it" },
+    { "id": "auth-monitor-surf-5", "screenId": "auth-monitor", "surface": "Delivery status filter Select", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "control of a pending table; keep with it" },
+    { "id": "auth-monitor-surf-6", "screenId": "auth-monitor", "surface": "Test numbers DataTable (business, phone, current code, expires in)", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "conventions-approved power; codes must NEVER be bulk-shipped with the list, only per-row on demand" },
+    { "id": "auth-monitor-surf-7", "screenId": "auth-monitor", "surface": "Reveal/Hide code button per test-number row", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "wire as an on-demand audited fetch; blocked on the codeHash schema resolution (auth-monitor-need-5)" },
+    { "id": "auth-monitor-surf-8", "screenId": "auth-monitor", "surface": "EmptyState 'No matching requests'", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "auth-monitor-surf-9", "screenId": "auth-monitor", "surface": "PageHeader title and subtitle copy", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "ai-usage-surf-1", "screenId": "ai-usage", "surface": "Stat row: voice parses, on-device, fallback, model spend StatCards", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "no backend source exists for any figure (ai-usage-need-1 UNSURE); truthful empty until the instrumentation ruling" },
+    { "id": "ai-usage-surf-2", "screenId": "ai-usage", "surface": "'Parses per week' sparkline with peak-week subtitle", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "same instrumentation dependency" },
+    { "id": "ai-usage-surf-3", "screenId": "ai-usage", "surface": "'By business' DataTable", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "same instrumentation dependency" },
+    { "id": "ai-usage-surf-4", "screenId": "ai-usage", "surface": "'Filter by plan' Select in the By business card header", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "control of a pending table; keep with it" },
+    { "id": "ai-usage-surf-5", "screenId": "ai-usage", "surface": "'Recent fallback parses' DataTable with anonymised transcripts", "liveness": "mock-fixture", "recommendation": "HONEST-EMPTY", "note": "transcript retention is an unruled privacy decision (ai-usage-need-4)" },
+    { "id": "ai-usage-surf-6", "screenId": "ai-usage", "surface": "PageHeader and section help copy", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "keep static; the hardcoded 'July 2026' period must derive once live" },
+    { "id": "audit-log-surf-1", "screenId": "audit-log", "surface": "Audit entries DataTable (Time / Admin / Action / Target business / Detail)", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "backed by NEW admin_audit_log; honest empty until entries exist" },
+    { "id": "audit-log-surf-2", "screenId": "audit-log", "surface": "SearchInput 'Search target business'", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "audit-log-surf-3", "screenId": "audit-log", "surface": "Select 'Filter by admin'", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "options from the AdminUser enumeration (audit-log-need-2)" },
+    { "id": "audit-log-surf-4", "screenId": "audit-log", "surface": "Select 'Filter by action type'", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "audit-log-surf-5", "screenId": "audit-log", "surface": "SectionCard header: month title plus 'Showing X of Y entries' counts", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "derive the month scope and counts from the server envelope, never hardcode 'July 2026'" },
+    { "id": "audit-log-surf-6", "screenId": "audit-log", "surface": "PageHeader 'Audit log' title and subtitle", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "audit-log-surf-7", "screenId": "audit-log", "surface": "EmptyState 'No matching entries'", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "audit-log-surf-8", "screenId": "audit-log", "surface": "Append-only footnote paragraph under the table", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy; keep as-is" },
+    { "id": "admins-surf-1", "screenId": "admins", "surface": "Admin users DataTable", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "admins-surf-2", "screenId": "admins", "surface": "SectionCard subtitle count 'N total, N active'", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "admins-surf-3", "screenId": "admins", "surface": "'You' badge and self-disable guard on the current admin's row", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "identity from admin me; server must also refuse self-disable" },
+    { "id": "admins-surf-4", "screenId": "admins", "surface": "Disable action with confirm/cancel flow on active admins", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "admins-surf-5", "screenId": "admins", "surface": "Enable button on disabled admins", "liveness": "mock-fixture", "recommendation": "WIRE" },
+    { "id": "admins-surf-6", "screenId": "admins", "surface": "Revoke invite action with confirm flow on invited admins", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "semantics pending admins-need-6 schema ruling" },
+    { "id": "admins-surf-7", "screenId": "admins", "surface": "Invite admin form (email input, role Select, Send invite button)", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "blocked on the admins-need-3 UNSURE ruling (no email provider exists); until then render a truthful disabled/unavailable state" },
+    { "id": "admins-surf-8", "screenId": "admins", "surface": "Invite validation messages", "liveness": "mock-fixture", "recommendation": "WIRE", "note": "duplicate/format checks must be re-validated server-side" },
+    { "id": "admins-surf-9", "screenId": "admins", "surface": "Invite confirmation notice 'Invite sent to {email}'", "liveness": "mock-fixture", "recommendation": "CUT", "note": "claims an email was sent when none is; reinstate only if a real invite email ships" },
+    { "id": "admins-surf-10", "screenId": "admins", "surface": "PageHeader title/subtitle ('Only superadmins see this screen.')", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "keep copy, but the claim is currently false: no role gate exists in the page code; gate must be enforced when auth lands" },
+    { "id": "admins-surf-11", "screenId": "admins", "surface": "Role explainer list (Support vs Superadmin capability copy)", "liveness": "static", "recommendation": "HONEST-EMPTY", "note": "truthful static copy matching conventions role matrix; keep as-is" },
+    { "id": "admins-surf-12", "screenId": "admins", "surface": "Invite card subtitle ('New admins verify with phone OTP on first sign in.')", "liveness": "static", "recommendation": "CUT", "note": "copy contradicts owner-confirmed admin auth (email+password, no 2FA in v1); see defect-handoff.md" }
+  ]
+}

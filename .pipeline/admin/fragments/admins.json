@@ -1,0 +1,134 @@
+{
+  "screenId": "admins",
+  "route": "/admins",
+  "needs": [
+    {
+      "id": "admins-need-1",
+      "kind": "read",
+      "summary": "List all dashboard admin accounts for the Admin users table, including invited accounts that have never signed in; header derives 'N total, N active' from the list.",
+      "entities": ["AdminUser"],
+      "fields": ["id", "name", "email", "role", "status", "lastActiveAt"],
+      "filters/actions": "No filters or pagination in the UI (small table). role enum: superadmin|support; status enum: active|invited|disabled; lastActiveAt nullable ISO timestamp (null renders 'Not yet signed in').",
+      "adminRole": "superadmin"
+    },
+    {
+      "id": "admins-need-2",
+      "kind": "read",
+      "summary": "Identify the currently signed-in admin (me) so the UI can tag their row with a 'You' badge and block self-disable.",
+      "entities": ["AdminUser"],
+      "fields": ["id", "name", "email", "role"],
+      "filters/actions": "Self-identification only; page.tsx line 97 disables the Disable action when admin.id === currentAdminId ('You cannot disable your own account'). Backend must also refuse self-disable server-side, not just hide it in the UI.",
+      "adminRole": "superadmin"
+    },
+    {
+      "id": "admins-need-3",
+      "kind": "write",
+      "summary": "Invite a new admin by email with a chosen role; the account appears immediately with status 'invited' and null lastActiveAt, and an invite email is sent.",
+      "entities": ["AdminUser", "AdminAuditLog"],
+      "fields": ["email", "role", "status", "name", "lastActiveAt"],
+      "filters/actions": "Create with status=invited. Uniqueness on email: UI shows 'This email already has admin access' on duplicates (page.tsx lines 66, 226-230); server must enforce. Email format validated client-side (regex line 44); server must re-validate. Card copy promises email delivery of the invite (line 203). UI fabricates id (adm_${Date.now()}, line 83) and name from the email local part (nameFromEmail, line 46) as fixture stand-ins; backend owns real id and canonical name. Audit-logged per conventions.",
+      "adminRole": "superadmin"
+    },
+    {
+      "id": "admins-need-4",
+      "kind": "action",
+      "summary": "Disable an active admin account (two-step confirm in UI), blocking their dashboard sign-in.",
+      "entities": ["AdminUser", "AdminAuditLog"],
+      "fields": ["id", "status"],
+      "filters/actions": "Transition active -> disabled on a single AdminUser by id. Server must reject self-disable. Audit-logged per conventions.",
+      "adminRole": "superadmin"
+    },
+    {
+      "id": "admins-need-5",
+      "kind": "action",
+      "summary": "Re-enable a disabled admin account.",
+      "entities": ["AdminUser", "AdminAuditLog"],
+      "fields": ["id", "status"],
+      "filters/actions": "Transition disabled -> active on a single AdminUser by id. Audit-logged per conventions.",
+      "adminRole": "superadmin"
+    },
+    {
+      "id": "admins-need-6",
+      "kind": "action",
+      "summary": "Revoke a pending invite (two-step confirm), removing the invited account from the roster so the invite can no longer be accepted.",
+      "entities": ["AdminUser", "AdminAuditLog"],
+      "fields": ["id", "status", "email"],
+      "filters/actions": "Only valid while status=invited (active accounts are disabled, not revoked). UI removes the row outright (page.tsx lines 74-78), i.e. delete-or-terminal-revocation semantics for never-activated accounts, subject to the protected registry's delete conventions. Audit-logged per conventions.",
+      "adminRole": "superadmin"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "admins-surf-1",
+      "surface": "Admin users DataTable (Name, Email, Role badge, Status badge, Last active, Actions columns)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx line 58 seeds useState from adminsDemoData.admins (lib/fixtures/admins.ts lines 23-43) and line 198 renders it as live rows."
+    },
+    {
+      "id": "admins-surf-2",
+      "surface": "SectionCard subtitle count 'N total, N active'",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx lines 184 and 195 derive counts from the fixture-seeded admins state, presented as live stats."
+    },
+    {
+      "id": "admins-surf-3",
+      "surface": "'You' badge and self-disable guard on the current admin's row",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx line 56 reads currentAdminId from adminsDemoData (fixtures/admins.ts line 24, 'adm_001'); lines 97-108 and 150 render the badge and disabled Disable button off that fixture identity."
+    },
+    {
+      "id": "admins-surf-4",
+      "surface": "Disable action with confirm/cancel flow on active admins (Disable -> Confirm disable / Cancel)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx lines 117-141: buttons have handlers but setStatus (lines 69-72) only maps over local useState; no network call."
+    },
+    {
+      "id": "admins-surf-5",
+      "surface": "Enable button on disabled admins",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx lines 110-116: onClick calls setStatus(admin.id, 'active'), a local-state-only mutation."
+    },
+    {
+      "id": "admins-surf-6",
+      "surface": "Revoke invite action with confirm flow on invited admins",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx lines 118-122: Confirm revoke calls revokeInvite (lines 74-78) which filters the row out of local useState only."
+    },
+    {
+      "id": "admins-surf-7",
+      "surface": "Invite admin form (email input, role Select, Send invite button)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx lines 80-94: sendInvite fabricates an AdminUser client-side (id adm_${Date.now()}, name via nameFromEmail) and appends to local state; inputs are controlled (lines 216-217, 239-240) but nothing leaves the page."
+    },
+    {
+      "id": "admins-surf-8",
+      "surface": "Invite validation messages ('Enter a valid email address.', 'This email already has admin access.')",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx lines 64-67 and 221-230: format check is a local regex (line 44) and the duplicate check compares against the fixture-seeded list, standing in for server-side uniqueness."
+    },
+    {
+      "id": "admins-surf-9",
+      "surface": "Invite confirmation notice 'Invite sent to {email}. They now appear in the table as invited.'",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx lines 264-269: driven by lastInvitedEmail local state set in sendInvite (line 91); claims an email was sent though no send occurs."
+    },
+    {
+      "id": "admins-surf-10",
+      "surface": "PageHeader title/subtitle ('Control who can sign in to this dashboard. Only superadmins see this screen.')",
+      "liveness": "static",
+      "evidence": "page.tsx lines 188-191: fixed copy, no data binding; note no actual role gate exists in the page code."
+    },
+    {
+      "id": "admins-surf-11",
+      "surface": "Role explainer list (Support vs Superadmin capability copy)",
+      "liveness": "static",
+      "evidence": "page.tsx lines 248-258: hardcoded help copy matching the conventions.md role matrix (support: no billing/plan overrides; superadmin: full access incl. managing admins)."
+    },
+    {
+      "id": "admins-surf-12",
+      "surface": "Invite card subtitle ('Invites go out by email. New admins verify with phone OTP on first sign in.')",
+      "liveness": "static",
+      "evidence": "page.tsx line 203: fixed explanatory copy; its phone-OTP-on-first-sign-in claim conflicts with conventions.md admin auth (email+password only, no 2FA for v1)."
+    }
+  ]
+}

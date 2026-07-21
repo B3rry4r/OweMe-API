@@ -1,0 +1,200 @@
+{
+  "screenId": "business-detail",
+  "route": "/businesses/detail?id=<businessId>",
+  "needs": [
+    {
+      "id": "business-detail-need-1",
+      "kind": "read",
+      "summary": "Fetch a single business profile by id for the header and Profile card: identity, plan, test flag, masked owner phone, join date, staff seat usage, subscription status, next renewal.",
+      "entities": ["Business", "Subscription"],
+      "fields": ["id", "name", "plan", "isTest", "ownerPhone", "joinedAt", "staffSeatsUsed", "staffSeatsTotal", "subscriptionStatus", "nextRenewal"],
+      "filters/actions": "lookup by business id (query param ?id=); ownerPhone must be masked or maskable for display",
+      "adminRole": "both"
+    },
+    {
+      "id": "business-detail-need-2",
+      "kind": "read",
+      "summary": "Fetch the business's BVUM (business value under management) and its effective plan ceiling, including enterprise banding state, so the meter and over-ceiling warning render.",
+      "entities": ["Business", "PlanConfig", "EnterpriseBanding"],
+      "fields": ["bvumKobo", "plan", "extraBands", "ceilingKobo", "baseCeilingKobo", "bandCeilingKobo", "basePriceKobo", "bandPriceKobo"],
+      "filters/actions": "effective ceiling = plan ceiling, or enterprise base + bands x bandCeiling; UI derives over-ceiling state from bvum/ceiling ratio",
+      "adminRole": "both"
+    },
+    {
+      "id": "business-detail-need-3",
+      "kind": "read",
+      "summary": "Fetch current-cycle credit usage broken down by spend type (reminder sends at 5 cr, voice parses at 1 cr, AI insights at 4 cr) plus the plan's monthly grant, any admin-granted bonus credits, and the enterprise fair-use reference.",
+      "entities": ["CreditLedger", "Business", "PlanConfig"],
+      "fields": ["sends", "parses", "insights", "usedCredits", "grant", "bonusCredits", "fairUseReference", "plan"],
+      "filters/actions": "scoped to the business and the current billing cycle; per-unit credit costs (5/1/4) are contract constants that should come from the backend, not be hardcoded in the UI",
+      "adminRole": "both"
+    },
+    {
+      "id": "business-detail-need-4",
+      "kind": "read",
+      "summary": "Fetch top-up bundle purchases for the current month and the hard monthly bundle cap so the bundle meter and at-cap notice render.",
+      "entities": ["Business", "BundlePurchase", "PlanConfig"],
+      "fields": ["bundlesBoughtThisMonth", "bundleCapPerMonth"],
+      "filters/actions": "count of bundle purchases scoped to business + current calendar month; cap is a global config value (fixture: 2)",
+      "adminRole": "both"
+    },
+    {
+      "id": "business-detail-need-5",
+      "kind": "read",
+      "summary": "Fetch the most recent debts for the business for the Debts table: customer name, amount, status, created date.",
+      "entities": ["Debt", "Customer"],
+      "fields": ["id", "customer", "amountKobo", "status", "createdAt"],
+      "filters/actions": "filter by businessId, ordered newest first, limited to a recent window (fixture shows 4-8 rows); status domain: open, part-paid, overdue, paid",
+      "adminRole": "both"
+    },
+    {
+      "id": "business-detail-need-6",
+      "kind": "read",
+      "summary": "Fetch the plan catalog (5-tier ladder) for the Force plan select and for labels/ceilings/grants shown across the screen; currently imported as fixture constants planMeta/planOrder.",
+      "entities": ["PlanConfig"],
+      "fields": ["planId", "label", "monthlyKobo", "ceilingKobo", "grant", "planOrder"],
+      "filters/actions": "full ordered catalog: starter, market, business, wholesale, enterprise; enterprise grant is null (fair use)",
+      "adminRole": "both"
+    },
+    {
+      "id": "business-detail-need-7",
+      "kind": "write",
+      "summary": "Mark or unmark the business as a test account (toggle).",
+      "entities": ["Business", "AdminAuditLog"],
+      "fields": ["isTest"],
+      "filters/actions": "toggle test flag on a business; every write recorded to admin_audit_log per conventions",
+      "adminRole": "superadmin"
+    },
+    {
+      "id": "business-detail-need-8",
+      "kind": "write",
+      "summary": "Grant a positive integer number of bonus credits to the business (form defaults to 250; client validates integer > 0).",
+      "entities": ["CreditLedger", "Business", "AdminAuditLog"],
+      "fields": ["bonusCredits", "grantAmount"],
+      "filters/actions": "additive credit grant on top of the plan grant; audit-logged; conventions place credit grants under test-account tooling but also allow superadmin on non-test businesses",
+      "adminRole": "superadmin"
+    },
+    {
+      "id": "business-detail-need-9",
+      "kind": "write",
+      "summary": "Force the business onto a specific plan, overriding billing until the next renewal; ceiling and grant follow the forced plan immediately.",
+      "entities": ["Business", "Subscription", "PlanConfig", "AdminAuditLog"],
+      "fields": ["plan", "nextRenewal"],
+      "filters/actions": "set plan to one of the 5 tiers; allowed on non-test businesses as the sales provisioning path; audit-logged",
+      "adminRole": "superadmin"
+    },
+    {
+      "id": "business-detail-need-10",
+      "kind": "write",
+      "summary": "Increment or decrement the enterprise extra-band count (floor 0), which raises/lowers the BVUM ceiling and monthly price per the banding config.",
+      "entities": ["Business", "EnterpriseBanding", "AdminAuditLog"],
+      "fields": ["extraBands"],
+      "filters/actions": "only meaningful when plan is enterprise; band count >= 0; audit-logged; allowed on non-test businesses (enterprise ceiling provisioning)",
+      "adminRole": "superadmin"
+    },
+    {
+      "id": "business-detail-need-11",
+      "kind": "action",
+      "summary": "Reset a test business: clear all debts, zero credit spend, and remove bonus credits. Gated behind the test flag; the UI disables it unless isTest is true and the backend must refuse for non-test businesses.",
+      "entities": ["Business", "Debt", "CreditLedger", "AdminAuditLog"],
+      "fields": ["isTest", "debts", "sends", "parses", "insights", "bonusCredits"],
+      "filters/actions": "destructive hard reset allowed ONLY when the test flag is set (server-side enforcement per conventions); audit-logged",
+      "adminRole": "superadmin"
+    },
+    {
+      "id": "business-detail-need-12",
+      "kind": "read",
+      "summary": "Fetch the admin action log entries targeting this business (action, acting admin, timestamp) for the Action log panel; currently a session-local list with a hardcoded admin name.",
+      "entities": ["AdminAuditLog", "AdminUser"],
+      "fields": ["id", "action", "admin", "time", "targetEntity", "targetId"],
+      "filters/actions": "filter audit log by target business id, newest first; conventions already mandate admin_audit_log writes, this screen needs the read side",
+      "adminRole": "both"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "business-detail-surf-1",
+      "surface": "Business lookup from ?id= query param",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:482-483 resolves the id against businessDetailDemoData and silently falls back to businessDetailDemoData[0]"
+    },
+    {
+      "id": "business-detail-surf-2",
+      "surface": "Page header: business name, id, joined date, plan badge, test badge",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:182-191 renders business.name/business.id/business.joinedAt from the fixture record"
+    },
+    {
+      "id": "business-detail-surf-3",
+      "surface": "Profile card KvList (owner phone, joined, seats, subscription status, next renewal)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:194-219 KvList rows all read from the fixture business record (maskPhone(business.ownerPhone) etc.)"
+    },
+    {
+      "id": "business-detail-surf-4",
+      "surface": "Scale (BVUM) meter with ceiling and over-ceiling warning",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:231-239 Meter value=business.bvumKobo against ceiling computed from fixture planMeta/enterpriseBanding constants"
+    },
+    {
+      "id": "business-detail-surf-5",
+      "surface": "Enterprise band -/+ controls and price math",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:136-141 changeBands mutates only local useState bands and appends to the local action log; no network call"
+    },
+    {
+      "id": "business-detail-surf-6",
+      "surface": "Credits meter with grant/fair-use reference and spend BarList (sends/parses/insights)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:144-148,283-318 usedCredits computed from fixture creditSpend with credit costs 5/1/4 hardcoded in the component"
+    },
+    {
+      "id": "business-detail-surf-7",
+      "surface": "Top-up bundles meter with monthly cap notice",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:320-341 Meter value=business.bundlesBoughtThisMonth against fixture constant bundleCapPerMonth"
+    },
+    {
+      "id": "business-detail-surf-8",
+      "surface": "Mark as test account / Remove test flag button",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:159-164 toggleTest flips local isTest state and writes a local log entry only"
+    },
+    {
+      "id": "business-detail-surf-9",
+      "surface": "Grant credits form (number input, Confirm grant, Cancel)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:150-157 confirmGrant validates and adds to local bonusCredits state; no backend call"
+    },
+    {
+      "id": "business-detail-surf-10",
+      "surface": "Force plan select + apply button",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:166-170 applyPlan sets local plan state from pendingPlan and logs locally; options come from fixture planOrder/planMeta"
+    },
+    {
+      "id": "business-detail-surf-11",
+      "surface": "Reset test business two-step confirm flow",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:172-178 runReset clears local debts/spend/bonusCredits state only; disabled gating on local isTest at line 417"
+    },
+    {
+      "id": "business-detail-surf-12",
+      "surface": "Action log panel",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:113-125 log is session-local useState seeded empty, with admin identity hardcoded as \"excel.admin\" at line 120"
+    },
+    {
+      "id": "business-detail-surf-13",
+      "surface": "Debts table / empty state",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:464-472 renders local debts state initialised from business.debts fixture rows (businessDetail.ts:101-110 etc.)"
+    },
+    {
+      "id": "business-detail-surf-14",
+      "surface": "Suspense fallback \"Loading business.\" and section help copy (force-plan note, reset gating note, empty-state body)",
+      "liveness": "static",
+      "evidence": "page.tsx:490,392-395,423-428,465-469 fixed label/help copy with no data binding"
+    }
+  ]
+}

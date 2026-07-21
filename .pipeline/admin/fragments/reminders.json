@@ -1,0 +1,116 @@
+{
+  "screenId": "reminders",
+  "route": "/reminders",
+  "needs": [
+    {
+      "id": "reminders-need-1",
+      "kind": "read",
+      "summary": "Monthly reminder-send aggregate stats for the stat cards: total sends, delivered count, SMS-only send count, SMS cost for the month, and the credits-per-automated-send rate. Delivery rate and credits consumed are derived client-side from these.",
+      "entities": ["ReminderSend", "CreditLedger"],
+      "fields": ["sendsThisMonth", "deliveredThisMonth", "smsSendsThisMonth", "smsCostThisMonthKobo", "creditsPerSend", "month"],
+      "filters/actions": "scoped to a calendar month (current month); platform-wide across all businesses",
+      "adminRole": "both"
+    },
+    {
+      "id": "reminders-need-2",
+      "kind": "read",
+      "summary": "Recent reminder sends list across all businesses for the delivery-monitor table, newest first, with per-send business name, channel, template step, sent timestamp, delivery status, and route cost in kobo.",
+      "entities": ["ReminderSend", "Business"],
+      "fields": ["id", "business.name", "channel", "step", "sentAt", "status", "costKobo"],
+      "filters/actions": "filter by channel (sms|whatsapp) and status (delivered|failed|queued); admin table pagination per conventions (?page=&limit=)",
+      "adminRole": "both"
+    },
+    {
+      "id": "reminders-need-3",
+      "kind": "read",
+      "summary": "Average route cost per SMS as a weekly time series (last 12 weeks, oldest first, kobo) for the sparkline and its start/end callouts.",
+      "entities": ["ReminderSend"],
+      "fields": ["costPerSmsAvgKobo", "weekStart"],
+      "filters/actions": "channel = sms only; grouped by week over a trailing 12-week window",
+      "adminRole": "both"
+    },
+    {
+      "id": "reminders-need-4",
+      "kind": "action",
+      "summary": "Retry a failed reminder send: re-queue a send whose status is failed (UI transitions it to queued). Only valid on failed sends. Must record to admin_audit_log per conventions.",
+      "entities": ["ReminderSend"],
+      "fields": ["id", "status"],
+      "filters/actions": "action: retry; precondition status == failed; result status -> queued",
+      "adminRole": "both"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "reminders-surf-1",
+      "surface": "Page header subtitle with covered month",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/reminders/page.tsx:122-125 subtitle interpolates `month` destructured from remindersDemoData (line 51), fixture lib/fixtures/reminders.ts:36 month: \"July 2026\""
+    },
+    {
+      "id": "reminders-surf-2",
+      "surface": "Stat card: Sends this month",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/reminders/page.tsx:128-132 value={formatNumber(stats.sendsThisMonth)} where stats comes from remindersDemoData (line 51); fixture value 1284 at lib/fixtures/reminders.ts:38"
+    },
+    {
+      "id": "reminders-surf-3",
+      "surface": "Stat card: Delivery rate",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/reminders/page.tsx:133-138 renders deliveryRate computed on lines 74-77 from fixture stats.deliveredThisMonth / stats.sendsThisMonth"
+    },
+    {
+      "id": "reminders-surf-4",
+      "surface": "Stat card: SMS cost this month",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/reminders/page.tsx:139-144 value={naira(stats.smsCostThisMonthKobo)} from fixture lib/fixtures/reminders.ts:41 (1_083_600 kobo)"
+    },
+    {
+      "id": "reminders-surf-5",
+      "surface": "Stat card: Credits consumed by sends",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/reminders/page.tsx:145-149 renders creditsConsumed computed on line 78 as stats.sendsThisMonth * stats.creditsPerSend, both fixture values"
+    },
+    {
+      "id": "reminders-surf-6",
+      "surface": "Channel filter Select",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/reminders/page.tsx:159-164 controlled Select bound to local useState (line 53) filtering fixture rows via useMemo (lines 56-64); mutates local state only"
+    },
+    {
+      "id": "reminders-surf-7",
+      "surface": "Status filter Select",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/reminders/page.tsx:165-170 controlled Select bound to local useState (line 54) filtering fixture rows via useMemo (lines 56-64); mutates local state only"
+    },
+    {
+      "id": "reminders-surf-8",
+      "surface": "Recent sends DataTable",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/reminders/page.tsx:175 rows={filtered} derived from useState seeded with remindersDemoData.sends (line 52), fixture array lib/fixtures/reminders.ts:47-174"
+    },
+    {
+      "id": "reminders-surf-9",
+      "surface": "Retry button on failed rows",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/reminders/page.tsx:111-117 onClick={() => retry(r.id)} where retry (lines 66-72) only setRows to flip local status failed -> queued; no network call"
+    },
+    {
+      "id": "reminders-surf-10",
+      "surface": "Empty state when filters match nothing",
+      "liveness": "static",
+      "evidence": "app/(shell)/reminders/page.tsx:177-181 EmptyState with fixed title/body copy, rendered only when filtered.length === 0"
+    },
+    {
+      "id": "reminders-surf-11",
+      "surface": "Cost per SMS trend Sparkline with 12-weeks-ago / this-week callouts",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/reminders/page.tsx:189-201 Sparkline data={costPerSmsTrendKobo} and trendStart/trendEnd (lines 79-80) from fixture array lib/fixtures/reminders.ts:44-46"
+    },
+    {
+      "id": "reminders-surf-12",
+      "surface": "Route-pricing narrative paragraph under the sparkline",
+      "liveness": "mock-fixture",
+      "evidence": "app/(shell)/reminders/page.tsx:202-207 hardcoded prose about pre-CAC retail route pricing (naira(1000) to naira(1500)) and a June route switch, interpolating fixture-derived naira(trendEnd); fixture narrative rendered as live cost analysis"
+    }
+  ]
+}

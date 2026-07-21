@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import { PrismaModule } from './prisma/prisma.module';
 import { CommonModule } from './common/common.module';
@@ -30,6 +31,8 @@ import { WebhooksModule } from './webhooks/webhooks.module';
   imports: [
     PrismaModule,
     CommonModule,
+    ScheduleModule.forRoot(), // cron transport for the reminder delivery worker
+
     // ── FEATURE MODULES (added per build wave) ──────────────────────────────
     // Wave 1:
     BusinessModule,

@@ -1,0 +1,2725 @@
+{
+  "frozenAt": "2026-07-21T00:00:00Z",
+  "refrozenAfter": "maintenance-pass",
+  "frameworkProfile": {
+    "framework": "NestJS 11 (@nestjs/platform-express)",
+    "language": "TypeScript 5.7 (strict), Node 22 (global fetch used by provider impls; no HTTP client dep)",
+    "projectLayout": "src/<feature>/{<feature>.controller.ts,<feature>.service.ts,<feature>.module.ts,tests/<feature>.contract.spec.ts}; shared wire shapes in src/shared (entities.ts, enums.ts, common.ts, dto/*.dto.ts); cross-cutting infra in src/common (guards, filters, decorators, tenancy, concurrency, provider interfaces + impls); src/prisma for the Prisma service. Path aliases @shared and @common (jest moduleNameMapper + tsconfig). Feature modules aggregated in src/app.module.ts in build-wave order.",
+    "orm": "Prisma 6 (prisma-client-js). Datasource sqlite for dev/test (prisma/dev.db), production target PostgreSQL per schema header comment. Migrations: prisma migrate (prisma/migrations: 20260711103511_init, 20260713111325_customer_soft_delete, 20260713140000_model_rev2_metering). Seed: ts-node prisma/seed.ts (5-plan rev 2 catalog: starter|market|business|wholesale|enterprise). Conventions: money = Int kobo, ids = client-minted UUIDv7 strings, enums = strings validated app-side (no Prisma enums), synced entities carry updatedAt + version Int.",
+    "validation": "class-validator decorators on DTO classes in src/shared/dto/*, enforced by a single global ValidationPipe in src/main.ts with { whitelist: true, forbidNonWhitelisted: true, transform: true, enableImplicitConversion: false }. Validation failures are remapped by the global filter from Nest's 400 to 422 VALIDATION_ERROR with the class-validator messages in error.details.",
+    "authIdiom": "Two GLOBAL APP_GUARD providers registered in src/app.module.ts: JwtAuthGuard (passport-jwt bearer strategy 'jwt') then RolesGuard. Routes opt OUT of auth with @Public() (SetMetadata IS_PUBLIC_KEY, checked class+handler). Roles are declared per-route with @Roles('owner'[, 'staff']); RolesGuard lets role 'owner' pass ANY role gate, 'staff' passes only where listed; no @Roles metadata = authenticated-only. Tenancy: @BusinessId() param decorator resolves businessId from the JWT principal (request.user) and throws FORBIDDEN when the claim is null; client-supplied tenancy is never trusted. Optimistic concurrency: 'If-Match: version=N' header parsed by parseIfMatchVersion, checked by assertVersion -> 409 VERSION_CONFLICT with top-level 'current'. An EntitlementsGuard exists (src/common/guards/entitlements.guard.ts) but is a documented NO-OP pass-through and is not registered globally; plan/credit gating is enforced in services (CreditLedgerService, BvumService, StaffService).",
+    "errorShape": "Exactly one envelope: { \"error\": { \"code\": <ErrorCode>, \"message\": string, \"details\"?: unknown[] }, ...extra } produced ONLY by the global HttpExceptionFilter (src/common/filters/http-exception.filter.ts, registered app.useGlobalFilters in src/main.ts). Services throw AppException subclasses (src/common/exceptions/app.exception.ts) and never hand-roll error JSON. Codes+status (src/shared/enums.ts ERROR_CODE_STATUS): VALIDATION_ERROR 422, UNAUTHENTICATED 401, FORBIDDEN 403, PLAN_REQUIRED 403 (+ error.requiredPlan), BVUM_CEILING 403 (+ error.requiredPlan), NOT_FOUND 404, VERSION_CONFLICT 409 (+ TOP-LEVEL sibling 'current' carrying the current server row), RATE_LIMITED 429, INTERNAL 500. Unmapped statuses: 501 (NotImplementedException from scaffolds) renders as code INTERNAL with HTTP 501.",
+    "tests": "Jest 29 + ts-jest + supertest. Contract specs live at src/<feature>/tests/*.contract.spec.ts (plus provider specs at src/common/providers/impl/tests/ and test/foundation.contract.spec.ts, test/smoke.e2e-spec.ts). Config test/jest-e2e.json, testRegex '.(e2e-spec|contract.spec).ts$'. Authoritative gate: 'npm run test:ci' -> test/run-isolated.sh runs each contract spec file against its OWN fresh SQLite DB (env OWEME_TEST_DB). Style: boot the real Nest app per suite and drive HTTP with supertest against the real Prisma/SQLite stack; external providers resolve to deterministic in-process stubs because provider selection in src/common/common.module.ts is env-credential-driven.",
+    "evidence": [
+      "package.json (nest 11, prisma 6, jest 29, ts-jest, supertest, scripts test:ci/prisma:*)",
+      "src/main.ts (global ValidationPipe, global HttpExceptionFilter, rawBody: true for webhook HMAC)",
+      "src/app.module.ts (APP_GUARD JwtAuthGuard + RolesGuard, 20 feature modules, ScheduleModule.forRoot() cron transport added by the maintenance pass)",
+      "package.json (@nestjs/schedule ^6.1.3 added by the maintenance pass for the reminder dispatch cron)",
+      "src/common/guards/jwt-auth.guard.ts + src/common/guards/roles.guard.ts + src/common/decorators/public.decorator.ts + src/common/decorators/roles.decorator.ts",
+      "src/common/strategies/jwt.strategy.ts (claims sub/businessId/role, JWT_ACCESS_SECRET)",
+      "src/common/filters/http-exception.filter.ts + src/common/exceptions/app.exception.ts + src/shared/enums.ts (ERROR_CODE_STATUS)",
+      "src/common/tenancy/tenant.ts (@BusinessId) + src/common/concurrency/version.ts (If-Match)",
+      "src/common/guards/entitlements.guard.ts (documented no-op skeleton)",
+      "prisma/schema.prisma + prisma/migrations/ + prisma/seed.ts",
+      "test/jest-e2e.json + test/run-isolated.sh + src/*/tests/*.contract.spec.ts",
+      "src/common/common.module.ts (env-driven real-vs-stub provider factories)"
+    ]
+  },
+  "shapes": {
+    "_note": "Named response/entity shapes referenced by endpoints via $ref. types are wire types; 'X|null' = nullable. All dates ISO-8601 strings; all money integer kobo. Source: src/shared/entities.ts and src/shared/common.ts unless stated.",
+    "Paginated<T>": {
+      "data": "T[]",
+      "nextCursor": "string|null"
+    },
+    "ErrorEnvelope": {
+      "error": {
+        "code": "ErrorCode",
+        "message": "string",
+        "details": "unknown[]?",
+        "requiredPlan": "string? (PLAN_REQUIRED/BVUM_CEILING only)"
+      },
+      "current": "row? (top-level, VERSION_CONFLICT only)"
+    },
+    "Business": {
+      "id": "string",
+      "businessName": "string",
+      "ownerName": "string",
+      "phone": "string",
+      "category": "string",
+      "currency": "string '<code> (<symbol>)'",
+      "reminderTone": "'gentle'|'friendly'|'final'",
+      "plan": "'starter'|'market'|'business'|'wholesale'|'enterprise'",
+      "paystackSubaccount": "string|null",
+      "logoUrl": "string|null",
+      "branchId": "string|null",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "version": "number",
+      "_note": "bvumCeilingOverride is a DB column NOT exposed on this wire shape"
+    },
+    "Staff": {
+      "id": "string",
+      "businessId": "string",
+      "name": "string",
+      "phone": "string",
+      "role": "'owner'|'staff'",
+      "active": "boolean",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "version": "number"
+    },
+    "StaffListResponse": {
+      "data": "Staff[]",
+      "seatCap": "number (-1 unlimited)",
+      "seatsUsed": "number (active non-owner staff)"
+    },
+    "AuthSession": {
+      "accessToken": "string (JWT, 15m)",
+      "refreshToken": "string (JWT, 30d)",
+      "user": "Staff",
+      "business": "Business|null"
+    },
+    "MeResponse": {
+      "user": "Staff",
+      "business": "Business|null"
+    },
+    "Customer": {
+      "id": "string",
+      "businessId": "string",
+      "name": "string",
+      "phone": "string",
+      "address": "string|null",
+      "note": "string|null",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "version": "number",
+      "_note": "sync serializer omits 'deleted'; raw Prisma rows returned by POST/DELETE /customers include deleted:boolean"
+    },
+    "CustomerView": {
+      "extends": "Customer",
+      "owed": "number kobo",
+      "debtCount": "number (open debts, remaining>0)",
+      "worstStatus": "DebtStatus ('paid' when none open)",
+      "lastActivityAt": "string|null",
+      "lastPaymentAt": "string|null",
+      "lastReminderAt": "string|null",
+      "earliestOverdueDue": "string|null"
+    },
+    "Debt": {
+      "id": "string",
+      "businessId": "string",
+      "customerId": "string",
+      "amount": "number kobo (principal)",
+      "note": "string|null",
+      "dueDate": "string|null",
+      "createdAt": "string",
+      "lastReminderAt": "string|null",
+      "nextReminderAt": "string|null",
+      "deleted": "boolean",
+      "updatedAt": "string",
+      "version": "number"
+    },
+    "DebtView": {
+      "extends": "Debt",
+      "paidAmount": "number kobo (sum payments)",
+      "remaining": "number kobo clamp(amount-paidAmount)",
+      "status": "'outstanding'|'partial'|'overdue'|'scheduled'|'reminder'|'paid' (DERIVED, never stored)",
+      "customer": {
+        "id": "string",
+        "name": "string",
+        "phone": "string"
+      }
+    },
+    "PayLink": {
+      "url": "string",
+      "fee": "number kobo (ONE combined disclosed fee: 2.5% + N100, cap N2500; never the Paystack/OweMe split)"
+    },
+    "ReminderScheduleStep": {
+      "offsetLabel": "'3 days before due'|'On due date'|'3 days overdue'|'Final follow-up'",
+      "date": "string (dueDate offset -3/0/+3/+7 at 09:00 UTC)",
+      "status": "'sent'|'pending' (purely date< now derived)"
+    },
+    "Payment": {
+      "id": "string",
+      "businessId": "string",
+      "debtId": "string",
+      "amount": "number kobo",
+      "method": "string (verbatim client label; webhook uses 'Paystack link')",
+      "reference": "string (server-minted 'OWM-#####' or Paystack reference for webhook payments)",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "version": "number"
+    },
+    "ReceiptResponse": {
+      "payment": "Payment",
+      "debt": "DebtView",
+      "business": {
+        "businessName": "string"
+      }
+    },
+    "Reminder": {
+      "id": "string",
+      "businessId": "string",
+      "debtId": "string",
+      "channel": "'sms'|'whatsapp'|'call'|'manual'|'printable'",
+      "status": "'scheduled'|'sent'|'failed'",
+      "message": "string|null",
+      "scheduledFor": "string|null",
+      "sentAt": "string|null",
+      "payLinkUrl": "string|null",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "version": "number"
+    },
+    "ReminderListItem": {
+      "extends": "Reminder",
+      "debt": {
+        "id": "string",
+        "amount": "number"
+      },
+      "customer": {
+        "id": "string",
+        "name": "string",
+        "phone": "string"
+      }
+    },
+    "Notification": {
+      "id": "string",
+      "businessId": "string",
+      "title": "string",
+      "body": "string",
+      "kind": "'payment'|'overdue'|'reminder'|'insight'|'info'",
+      "read": "boolean",
+      "createdAt": "string",
+      "updatedAt": "string",
+      "version": "number"
+    },
+    "NotificationPreferences": {
+      "businessId": "string",
+      "payments": "boolean",
+      "overdue": "boolean",
+      "delivery": "boolean",
+      "weekly": "boolean",
+      "updatedAt": "string",
+      "version": "number"
+    },
+    "PayoutAccount": {
+      "businessId": "string",
+      "bankCode": "string",
+      "accountNumber": "string (10-digit NUBAN)",
+      "accountName": "string"
+    },
+    "Bank": {
+      "code": "string",
+      "name": "string"
+    },
+    "Plan": {
+      "id": "PlanId",
+      "name": "string",
+      "pricePerMonth": "number kobo (0=free)",
+      "tagline": "string",
+      "features": "string[]",
+      "productId": "string|null",
+      "talkToSales": "boolean",
+      "recommended": "boolean",
+      "limits": {
+        "creditsPerMonth": "number (-1 fair-use)",
+        "staffSeats": "number (-1 unlimited)",
+        "bvumCeiling": "number|null kobo (rev 2: concrete for every tier)"
+      }
+    },
+    "Subscription": {
+      "businessId": "string",
+      "planId": "PlanId",
+      "entitlementState": "'none'|'pending'|'active'|'gracePeriod'|'expired'",
+      "activePlanId": "PlanId",
+      "renewalAt": "string|null"
+    },
+    "BillingTransaction": {
+      "id": "string (store transaction id = idempotency key)",
+      "businessId": "string",
+      "kind": "'subscription'|'credits-bundle'",
+      "productId": "string",
+      "label": "string",
+      "amount": "number kobo",
+      "createdAt": "string"
+    },
+    "VerifyReceiptResponse": {
+      "entitlement": "Subscription? (plan product)",
+      "ledger": "{ credits?: number }? (bundle product)",
+      "_note": "exactly one of the two keys per response; source src/billing/billing.service.ts"
+    },
+    "UsageResponse": {
+      "credits": {
+        "used": "number",
+        "limit": "number (= monthlyGrant; -1 fair-use)",
+        "balance": "number",
+        "monthlyGrant": "number",
+        "periodStart": "string"
+      }
+    },
+    "BvumResponse": {
+      "value": "number kobo",
+      "ceiling": "number|null kobo (effective: Business.bvumCeilingOverride ?? Plan.bvumCeiling)",
+      "recommendedPlan": "PlanId|null (advisory, >=0.8 of ceiling)",
+      "windowDays": "30 (literal)"
+    },
+    "VoiceParseOutput": {
+      "customerName": "string|null",
+      "amount": "number kobo",
+      "description": "string|null",
+      "dueDate": "string|null",
+      "_source": "src/common/providers/llm-provider.ts"
+    },
+    "DashboardResponse": {
+      "outstandingTotal": "number kobo",
+      "owingCustomerCount": "number",
+      "recoveredThisMonth": "number kobo",
+      "dueTodayTotal": "number kobo",
+      "overdueTotal": "number kobo",
+      "overdueCount": "number",
+      "activity": "ActivityItem[] (cap 8, at desc)",
+      "hasAnyDebts": "boolean",
+      "hasAnyCustomers": "boolean",
+      "hasUnread": "boolean"
+    },
+    "ActivityItem": {
+      "kind": "'payment'|'debt'|'reminder'",
+      "title": "string",
+      "subtitle": "string",
+      "amount": "number|null kobo",
+      "at": "string"
+    },
+    "SyncResponse": {
+      "changes": {
+        "customers": "Customer[]",
+        "debts": "Debt[]",
+        "payments": "Payment[]",
+        "reminders": "Reminder[]"
+      },
+      "tombstones": {
+        "customers": "string[]",
+        "debts": "string[]",
+        "payments": "string[] (ALWAYS empty, no soft-delete source)",
+        "reminders": "string[] (ALWAYS empty, no soft-delete source)"
+      },
+      "cursor": "string ISO (max updatedAt watermark; never regresses)"
+    },
+    "SyncStatusResponse": {
+      "lastSyncedAt": "string|null",
+      "pendingCount": "number (ALWAYS 0; pending is a client-side concept)"
+    },
+    "WebhookAck": {
+      "received": "true (literal)",
+      "processed": "boolean"
+    }
+  },
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/auth/request-otp",
+      "guards": [
+        "@Public() (bypasses global JwtAuthGuard)"
+      ],
+      "roles": [],
+      "scope": "self",
+      "request": {
+        "body": {
+          "phone": "string (required, non-empty)"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": "{} ALWAYS (no account enumeration; silent sliding-window throttle 30/phone/min + 120/ip/min)"
+      },
+      "uncertain": null,
+      "evidence": "src/auth/auth.controller.ts:17-23, src/auth/auth.service.ts:45-59"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/verify-otp",
+      "guards": [
+        "@Public()"
+      ],
+      "roles": [],
+      "scope": "self",
+      "request": {
+        "body": {
+          "phone": "string (required)",
+          "code": "string (length 6)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref AuthSession",
+        "errors": [
+          "401 UNAUTHENTICATED (missing/expired/wrong code)",
+          "429 RATE_LIMITED (>=5 attempts on the code)"
+        ]
+      },
+      "uncertain": "unknown phone silently mints a placeholder Business ('', currency 'NGN (\u20a6)', plan starter) + owner Staff, so business is non-null even for brand-new users",
+      "evidence": "src/auth/auth.controller.ts:25-30, src/auth/auth.service.ts:62-92,149-194"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/refresh",
+      "guards": [
+        "@Public()"
+      ],
+      "roles": [],
+      "scope": "self",
+      "request": {
+        "body": {
+          "refreshToken": "string (required)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "accessToken": "string",
+          "refreshToken": "string"
+        },
+        "errors": [
+          "401 UNAUTHENTICATED (invalid/expired; REUSE of a rotated token revokes the user's whole live chain)"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/auth/auth.controller.ts:32-37, src/auth/auth.service.ts:95-128"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/logout",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "self",
+      "request": {},
+      "response": {
+        "status": 204,
+        "body": "empty (revokes ALL live refresh tokens for the caller userId)"
+      },
+      "uncertain": null,
+      "evidence": "src/auth/auth.controller.ts:39-44, src/auth/auth.service.ts:131-136"
+    },
+    {
+      "method": "GET",
+      "path": "/me",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "self",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "$ref MeResponse"
+      },
+      "uncertain": null,
+      "evidence": "src/auth/auth.controller.ts:51-60 (separate MeController on root path), src/auth/auth.service.ts:139-144"
+    },
+    {
+      "method": "GET",
+      "path": "/business",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "$ref Business"
+      },
+      "uncertain": null,
+      "evidence": "src/business/business.controller.ts:16-20"
+    },
+    {
+      "method": "PUT",
+      "path": "/business",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {
+        "headers": {
+          "If-Match": "version=N (optional; stale -> 409 + current)"
+        },
+        "body": {
+          "businessName": "string (required)",
+          "ownerName": "string?",
+          "phone": "string?",
+          "category": "string?",
+          "currency": "string?",
+          "reminderTone": "'gentle'|'friendly'|'final'?"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref Business (upsert-by-businessId: creates the row on first onboarding call; plan/paystackSubaccount NOT settable here)"
+      },
+      "uncertain": null,
+      "evidence": "src/business/business.controller.ts:22-31, src/business/business.service.ts, src/shared/dto/business.dto.ts"
+    },
+    {
+      "method": "GET",
+      "path": "/plans",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "self",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "Plan[] (global catalog, pricePerMonth asc; not tenant data)"
+      },
+      "uncertain": null,
+      "evidence": "src/plans/plans.controller.ts, src/plans/plans.service.ts"
+    },
+    {
+      "method": "GET",
+      "path": "/staff",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "$ref StaffListResponse (owner first: role asc then createdAt asc)"
+      },
+      "uncertain": null,
+      "evidence": "src/staff/staff.controller.ts:16-20, src/staff/staff.service.ts:29-38"
+    },
+    {
+      "method": "POST",
+      "path": "/staff",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {
+        "body": {
+          "phone": "string (required)",
+          "name": "string?",
+          "role": "'owner'|'staff' (required in DTO but COERCED to 'staff' server-side)"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": "$ref Staff",
+        "errors": [
+          "403 PLAN_REQUIRED + error.requiredPlan when the plan's finite seatCap is reached"
+        ]
+      },
+      "uncertain": "idempotent on (businessId, phone) \u2014 a re-invite returns the EXISTING row but the controller still renders 201 (unlike customers/debts/payments which switch to 200)",
+      "evidence": "src/staff/staff.controller.ts:22-27, src/staff/staff.service.ts:46-76"
+    },
+    {
+      "method": "PATCH",
+      "path": "/staff/:id",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        },
+        "headers": {
+          "If-Match": "version=N (optional)"
+        },
+        "body": {
+          "active": "boolean (required)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref Staff",
+        "errors": [
+          "403 FORBIDDEN (owner row cannot be deactivated)",
+          "404 NOT_FOUND",
+          "409 VERSION_CONFLICT + current"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/staff/staff.controller.ts:29-38, src/staff/staff.service.ts:82-101"
+    },
+    {
+      "method": "GET",
+      "path": "/usage",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "$ref UsageResponse (READ HAS A WRITE SIDE EFFECT: lazily creates/refills the CreditLedger from the plan grant at calendar-month rollover)"
+      },
+      "uncertain": null,
+      "evidence": "src/usage/usage.controller.ts, src/usage/usage.service.ts, src/usage/credit-ledger.service.ts:97-125"
+    },
+    {
+      "method": "GET",
+      "path": "/customers",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "query": {
+          "cursor": "string? (opaque base64url offset)",
+          "limit": "number? 1..100 default 20",
+          "filter": "'all'|'owing'|'overdue'|'paid-up'?",
+          "sort": "'most-owed'|'recently-active'|'name'? (default name)",
+          "q": "string? (name substring OR phone digits; never AI)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "Paginated<CustomerView>"
+      },
+      "uncertain": null,
+      "evidence": "src/customers/customers.controller.ts:37-44, src/customers/customers.service.ts:55-113"
+    },
+    {
+      "method": "GET",
+      "path": "/customers/:id",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref CustomerView",
+        "errors": [
+          "404 NOT_FOUND (not in tenant or soft-deleted)"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/customers/customers.controller.ts:46-50"
+    },
+    {
+      "method": "POST",
+      "path": "/customers",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "body": {
+          "id": "string (client-minted UUIDv7, required)",
+          "name": "string (required)",
+          "phone": "string (required, may be '')",
+          "note": "string?",
+          "address": "string?"
+        }
+      },
+      "response": {
+        "status": "201 created | 200 idempotent re-POST returns existing row",
+        "body": "$ref Customer (raw Prisma row incl. deleted)",
+        "errors": [
+          "403 FORBIDDEN (id exists in another tenant)"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/customers/customers.controller.ts:52-62, src/customers/customers.service.ts:127-150"
+    },
+    {
+      "method": "DELETE",
+      "path": "/customers/:id",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref Customer (the now-soft-deleted row). SOFT delete: sets Customer.deleted=true AND cascade soft-archives all its non-deleted Debts (deleted=true) in one transaction; surfaces as sync tombstones",
+        "errors": [
+          "404 NOT_FOUND"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/customers/customers.controller.ts:64-68, src/customers/customers.service.ts:158-174"
+    },
+    {
+      "method": "GET",
+      "path": "/customers/:id/activity",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "ActivityItem[] (debts + payments + SENT reminders, at desc)"
+      },
+      "uncertain": null,
+      "evidence": "src/customers/customers.controller.ts:70-74, src/customers/customers.service.ts:177-221"
+    },
+    {
+      "method": "GET",
+      "path": "/customers/:id/risk",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 501,
+        "body": "ErrorEnvelope (code INTERNAL, HTTP 501) \u2014 SCAFFOLD, always throws; no credits debited; future weight is CREDIT_WEIGHTS.insightOrRisk=4 (maintenance pass fixed the stale '5' controller comment)"
+      },
+      "uncertain": null,
+      "evidence": "src/customers/customers.controller.ts:76-81, src/usage/credit-ledger.service.ts (CREDIT_WEIGHTS)"
+    },
+    {
+      "method": "GET",
+      "path": "/notifications",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {
+        "query": {
+          "cursor": "string? (last row id)",
+          "limit": "number? 1..100 default 20"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "Paginated<Notification> (createdAt desc, id desc). Rows are now created by live code: the Paystack webhook writes kind 'payment' rows (payment received / archived-debt payment / overpayment) and the reminder dispatch cron writes kind 'reminder' rows (sent / failed)"
+      },
+      "uncertain": null,
+      "evidence": "src/notifications/notifications.controller.ts:15-22, src/notifications/notifications.service.ts, src/webhooks/webhooks.service.ts:279-284, src/reminders/reminder-dispatch.service.ts:225-229"
+    },
+    {
+      "method": "POST",
+      "path": "/notifications/mark-all-read",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {},
+      "response": {
+        "status": 204,
+        "body": "empty (sets read=true + version++ on every unread row of the business)"
+      },
+      "uncertain": null,
+      "evidence": "src/notifications/notifications.controller.ts:24-29"
+    },
+    {
+      "method": "GET",
+      "path": "/notification-preferences",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "$ref NotificationPreferences (READ SIDE EFFECT: lazily upserts defaults payments/overdue/delivery=true, weekly=false on first read)"
+      },
+      "uncertain": null,
+      "evidence": "src/notification-preferences/notification-preferences.controller.ts:16-20, src/notification-preferences/notification-preferences.service.ts:16-21"
+    },
+    {
+      "method": "PUT",
+      "path": "/notification-preferences",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {
+        "body": {
+          "payments": "boolean (required)",
+          "overdue": "boolean (required)",
+          "delivery": "boolean (required)",
+          "weekly": "boolean (required)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref NotificationPreferences (upsert-by-businessId)"
+      },
+      "uncertain": null,
+      "evidence": "src/notification-preferences/notification-preferences.controller.ts:22-29"
+    },
+    {
+      "method": "GET",
+      "path": "/banks",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "self",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "Bank[] (live proxy of the payment gateway's bank list; Nigeria/NGN)"
+      },
+      "uncertain": null,
+      "evidence": "src/payout-account/payout-account.controller.ts:17-21, src/payout-account/payout-account.service.ts:29-32"
+    },
+    {
+      "method": "POST",
+      "path": "/payout-account/resolve",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "self",
+      "request": {
+        "body": {
+          "bankCode": "string (required)",
+          "accountNumber": "string (exactly 10 chars)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "accountName": "string"
+        },
+        "errors": [
+          "422 VALIDATION_ERROR (unresolvable account)"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/payout-account/payout-account.controller.ts:23-28, src/payout-account/payout-account.service.ts:35-42"
+    },
+    {
+      "method": "GET",
+      "path": "/payout-account",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "PayoutAccount | null (JSON null body when unset)"
+      },
+      "uncertain": null,
+      "evidence": "src/payout-account/payout-account.controller.ts:30-34"
+    },
+    {
+      "method": "PUT",
+      "path": "/payout-account",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {
+        "body": {
+          "bankCode": "string (required)",
+          "accountNumber": "string (required)",
+          "accountName": "string (required)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref PayoutAccount. SIDE EFFECT: creates a Paystack subaccount via the gateway and writes Business.paystackSubaccount",
+        "errors": [
+          "404 NOT_FOUND (business row missing)"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/payout-account/payout-account.controller.ts:36-44, src/payout-account/payout-account.service.ts:54-87"
+    },
+    {
+      "method": "GET",
+      "path": "/subscription",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "$ref Subscription (no row -> defaults {planId: Business.plan, entitlementState:'none', activePlanId:'starter', renewalAt:null})"
+      },
+      "uncertain": null,
+      "evidence": "src/billing/billing.controller.ts:23-27, src/billing/billing.service.ts:50-74"
+    },
+    {
+      "method": "POST",
+      "path": "/billing/verify-receipt",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {
+        "body": {
+          "platform": "'ios'|'android'",
+          "productId": "string (required)",
+          "receipt": "string (required)"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": "$ref VerifyReceiptResponse",
+        "errors": [
+          "422 VALIDATION_ERROR (unverifiable receipt or unknown productId)",
+          "403 FORBIDDEN (3rd credits-bundle in a calendar month; hard cap 2)"
+        ]
+      },
+      "uncertain": "controller has no @HttpCode so Nest defaults POST to 201",
+      "evidence": "src/billing/billing.controller.ts:29-36, src/billing/billing.service.ts:77-116, src/billing/bundle-catalog.ts"
+    },
+    {
+      "method": "GET",
+      "path": "/billing/history",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {
+        "query": {
+          "cursor": "string? (last row id)",
+          "limit": "number? 1..100 default 20"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "Paginated<BillingTransaction> (createdAt desc, id desc)"
+      },
+      "uncertain": null,
+      "evidence": "src/billing/billing.controller.ts:38-45, src/billing/billing.service.ts:130-150"
+    },
+    {
+      "method": "POST",
+      "path": "/voice/parse",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "body": {
+          "transcript": "string (required)",
+          "knownCustomers": "string[]?"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref VoiceParseOutput",
+        "errors": [
+          "403 PLAN_REQUIRED + error.requiredPlan (credits exhausted; thrown AFTER the LLM call, before data returns)"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/voice/voice.controller.ts, src/voice/voice.service.ts (debit 1 credit on success only)"
+    },
+    {
+      "method": "GET",
+      "path": "/insights/dashboard",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {},
+      "response": {
+        "status": 501,
+        "body": "ErrorEnvelope (code INTERNAL, HTTP 501) \u2014 SCAFFOLD, always throws; auth 401 / staff 403 still enforced first"
+      },
+      "uncertain": null,
+      "evidence": "src/insights/insights.controller.ts, src/insights/insights.service.ts"
+    },
+    {
+      "method": "GET",
+      "path": "/debts",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "query": {
+          "cursor": "string? (opaque base64url offset)",
+          "limit": "number? 1..100 default 20",
+          "status": "'active'|'overdue'|'paid'|'archived'?",
+          "sort": "'most-owed'|'soonest-due'|'recently-added'? (default recently-added)",
+          "q": "string? (customer name/phone digits/note)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "Paginated<DebtView> (status=archived lists deleted=true rows; all other filters exclude them)"
+      },
+      "uncertain": null,
+      "evidence": "src/debts/debts.controller.ts:45-52, src/debts/debts.service.ts:68-133"
+    },
+    {
+      "method": "GET",
+      "path": "/debts/:id",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref DebtView",
+        "errors": [
+          "404 NOT_FOUND"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/debts/debts.controller.ts:54-58"
+    },
+    {
+      "method": "POST",
+      "path": "/debts",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "body": {
+          "id": "string (client-minted UUIDv7, required)",
+          "customerId": "string (required, must be in tenant)",
+          "amount": "int kobo >=1 (required)",
+          "note": "string?",
+          "dueDate": "ISO date string?"
+        }
+      },
+      "response": {
+        "status": "201 created | 200 idempotent re-POST returns existing view",
+        "body": "$ref DebtView",
+        "errors": [
+          "404 NOT_FOUND (customer not in tenant)",
+          "403 FORBIDDEN (id exists in another tenant)",
+          "403 BVUM_CEILING + error.requiredPlan (INSTANT rev 2 enforcement: projected BVUM over the effective ceiling; only NEW debts gated)"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/debts/debts.controller.ts:60-70, src/debts/debts.service.ts:147-180, src/bvum/bvum.service.ts:62-77"
+    },
+    {
+      "method": "PATCH",
+      "path": "/debts/:id",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        },
+        "headers": {
+          "If-Match": "version=N (optional)"
+        },
+        "body": {
+          "amount": "int kobo >=1?",
+          "note": "string?",
+          "dueDate": "ISO date string?",
+          "clearDueDate": "boolean? (true explicitly nulls dueDate)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref DebtView",
+        "errors": [
+          "404 NOT_FOUND",
+          "409 VERSION_CONFLICT + current"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/debts/debts.controller.ts:72-81, src/debts/debts.service.ts:183-209"
+    },
+    {
+      "method": "DELETE",
+      "path": "/debts/:id",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref DebtView. SOFT delete: deleted=true + version++ (idempotent no-op if already deleted); surfaces as sync tombstone",
+        "errors": [
+          "404 NOT_FOUND"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/debts/debts.controller.ts:83-87, src/debts/debts.service.ts:212-221"
+    },
+    {
+      "method": "POST",
+      "path": "/debts/:id/restore",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": "$ref DebtView (deleted=false + version++; no @HttpCode so Nest default 201)"
+      },
+      "uncertain": null,
+      "evidence": "src/debts/debts.controller.ts:89-93, src/debts/debts.service.ts:224-233"
+    },
+    {
+      "method": "POST",
+      "path": "/debts/:id/pay-link",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": "$ref PayLink (no @HttpCode so Nest default 201). SIDE EFFECT: external gateway payment request (reference PAYL_<uuidv7>, subaccount split with OweMe 1% cap N500 commission, metadata {debtId,businessId,customerId} consumed later by the Paystack webhook)"
+      },
+      "uncertain": null,
+      "evidence": "src/debts/debts.controller.ts:95-99, src/debts/debts.service.ts:239-256, src/debts/pay-link-fees.ts"
+    },
+    {
+      "method": "GET",
+      "path": "/debts/:id/payments",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "Payment[] (createdAt desc)"
+      },
+      "uncertain": null,
+      "evidence": "src/debts/debts.controller.ts:101-105"
+    },
+    {
+      "method": "GET",
+      "path": "/debts/:id/reminders",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "Reminder[] (createdAt desc)"
+      },
+      "uncertain": null,
+      "evidence": "src/debts/debts.controller.ts:107-111"
+    },
+    {
+      "method": "GET",
+      "path": "/debts/:id/reminder-schedule",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "ReminderScheduleStep[] (DERIVED from dueDate at offsets -3/0/+3/+7 09:00 UTC; [] when paid/archived/no dueDate; step 'sent' means only that its date is past \u2014 no Reminder rows are materialized or dispatched)"
+      },
+      "uncertain": null,
+      "evidence": "src/debts/debts.controller.ts:113-120, src/debts/debts.service.ts:283-307"
+    },
+    {
+      "method": "POST",
+      "path": "/debts/:id/payments",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string (debtId)"
+        },
+        "body": {
+          "id": "string (client-minted UUIDv7, required)",
+          "amount": "int kobo >=1 (required)",
+          "method": "string (required, recorded verbatim)"
+        }
+      },
+      "response": {
+        "status": "201 created | 200 idempotent re-POST returns existing payment",
+        "body": "$ref Payment (reference server-minted OWM-#####)",
+        "errors": [
+          "404 NOT_FOUND (debt)",
+          "403 FORBIDDEN (id in another tenant)",
+          "422 VALIDATION_ERROR overpayment: details [{field:'amount', remaining, attempted}]"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/payments/payments.controller.ts:19-30, src/payments/payments.service.ts:60-98,165-179"
+    },
+    {
+      "method": "GET",
+      "path": "/payments/:id",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string (paymentId)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref ReceiptResponse",
+        "errors": [
+          "404 NOT_FOUND"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/payments/payments.controller.ts:32-39, src/payments/payments.service.ts:104-121"
+    },
+    {
+      "method": "POST",
+      "path": "/debts/:id/undo-payment",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string (debtId)"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": "$ref Payment (the removed most-recent payment; HARD prisma.payment.delete \u2014 the ONLY hard delete in the app surface; no @HttpCode so Nest default 201)",
+        "errors": [
+          "404 NOT_FOUND (debt or no payment to undo)"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/payments/payments.controller.ts:41-45, src/payments/payments.service.ts:128-139"
+    },
+    {
+      "method": "GET",
+      "path": "/reminders",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "query": {
+          "cursor": "string? (opaque base64url offset)",
+          "limit": "number? 1..100 default 20",
+          "status": "'scheduled'|'sent'|'failed'?"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "Paginated<ReminderListItem> (createdAt desc)"
+      },
+      "uncertain": null,
+      "evidence": "src/reminders/reminders.controller.ts:24-31, src/reminders/reminders.service.ts:68-92"
+    },
+    {
+      "method": "POST",
+      "path": "/reminders",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "body": {
+          "id": "string (client-minted UUIDv7, required)",
+          "debtId": "string (required, in tenant)",
+          "channel": "'sms'|'whatsapp'|'call'|'manual'|'printable' (required)",
+          "message": "string?",
+          "payLinkUrl": "string?",
+          "scheduledFor": "ISO date string?"
+        }
+      },
+      "response": {
+        "status": "201 created | 200 idempotent re-POST returns existing row",
+        "body": "$ref Reminder. Future scheduledFor -> status 'scheduled' (NO meter, NO send at create; the per-minute ReminderDispatchService cron later claims and delivers due rows). Immediate sms|whatsapp: debits 5 credits BEFORE dispatch via MESSAGE_SENDER then status 'sent'; call|manual|printable recorded 'sent' free",
+        "errors": [
+          "404 NOT_FOUND (debt)",
+          "403 FORBIDDEN (id in another tenant)",
+          "403 PLAN_REQUIRED + error.requiredPlan (credits exhausted; no row persisted)"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/reminders/reminders.controller.ts:33-43, src/reminders/reminders.service.ts:100-158, src/reminders/reminder-dispatch.service.ts (worker added by the maintenance pass)",
+      "notes": "Immediate creates (no future scheduledFor) are FREE records of manual deeplink/call/manual/printable sends: no credit debit, no server dispatch (fixed 2026-07-21; previously debited 5 credits and double-dispatched). Future scheduledFor rows are metered and dispatched by ReminderDispatchService."
+    },
+    {
+      "method": "POST",
+      "path": "/reminders/:id/retry",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "params": {
+          "id": "string"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref Reminder (failed rows only; re-debits 5 credits for metered channels, re-dispatches, sets status 'sent' + sentAt + version++)",
+        "errors": [
+          "404 NOT_FOUND",
+          "422 VALIDATION_ERROR (row not 'failed')",
+          "403 PLAN_REQUIRED (row stays failed)"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/reminders/reminders.controller.ts:45-50, src/reminders/reminders.service.ts:165-192",
+      "notes": "Server re-dispatch, sms only: debits 5 unified credits and re-sends. whatsapp retry -> 422 VALIDATION_ERROR (no server WhatsApp API). Exhausted credits -> 403 PLAN_REQUIRED."
+    },
+    {
+      "method": "GET",
+      "path": "/bvum",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "scope": "own-records",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "$ref BvumResponse (advisory only; never mutates the plan; weighted 30-day formula receivables .4 / creditIssued .3 / recovery .15 / activeDebtors .1 / complexity .05)"
+      },
+      "uncertain": null,
+      "evidence": "src/bvum/bvum.controller.ts, src/bvum/bvum.service.ts:49-55,148-185"
+    },
+    {
+      "method": "GET",
+      "path": "/dashboard",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "$ref DashboardResponse (derived, owns no table; core-recovery surface, never plan-gated)"
+      },
+      "uncertain": null,
+      "evidence": "src/dashboard/dashboard.controller.ts, src/dashboard/dashboard.service.ts"
+    },
+    {
+      "method": "GET",
+      "path": "/activity",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "query": {
+          "cursor": "string?",
+          "limit": "number? 1..100 default 20"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "Paginated<ActivityItem> (payments + non-deleted debts + SENT reminders, at desc; derived, owns no table)"
+      },
+      "uncertain": null,
+      "evidence": "src/activity/activity.controller.ts, src/activity/activity.service.ts"
+    },
+    {
+      "method": "GET",
+      "path": "/sync",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {
+        "query": {
+          "since": "string? (ISO or epoch-millis cursor; invalid/absent -> FULL pull)"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref SyncResponse (changes exclude soft-deleted rows; deleted Customer/Debt ids go to tombstones; Payment/Reminder tombstones structurally always empty)"
+      },
+      "uncertain": null,
+      "evidence": "src/sync/sync.controller.ts:16-23, src/sync/sync.service.ts:98-147"
+    },
+    {
+      "method": "GET",
+      "path": "/sync/status",
+      "guards": [
+        "JwtAuthGuard(global)",
+        "RolesGuard(global)"
+      ],
+      "roles": [
+        "owner",
+        "staff"
+      ],
+      "scope": "own-records",
+      "request": {},
+      "response": {
+        "status": 200,
+        "body": "$ref SyncStatusResponse"
+      },
+      "uncertain": null,
+      "evidence": "src/sync/sync.controller.ts:25-29, src/sync/sync.service.ts:156-172"
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks/paystack",
+      "guards": [
+        "@Public() \u2014 trust boundary is the provider HMAC signature only"
+      ],
+      "roles": [],
+      "scope": "cross-user",
+      "request": {
+        "headers": {
+          "x-paystack-signature": "string (HMAC-SHA512 of the RAW body with the secret key; required)"
+        },
+        "body": "PaystackEvent { event?: string, data?: { reference?: string, amount?: number kobo, metadata?: { debtId?, businessId?, customerId? } } } \u2014 provider-defined, only trusted AFTER verification"
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref WebhookAck. A VERIFIED charge.success is recorded UNCONDITIONALLY in full (charge-recording invariant): archived (deleted=true) debts and overpaying charges are no longer edge cases that skew state silently \u2014 the Payment row always carries the full charged amount, remaining clamps to 0, the debt is NEVER unarchived, and a Notification row (kind 'payment') is written per charge: normal -> 'Payment received', archived debt -> 'Archived debt received a payment', overpayment -> 'Debt overpaid' with the excess amount. Settle at paidTotal >= principal clears Debt.nextReminderAt. Idempotent on data.reference",
+        "errors": [
+          "401 UNAUTHENTICATED (missing/invalid signature)"
+        ]
+      },
+      "uncertain": "raw-body fallback still present: when req.rawBody is unavailable the signature is checked over a re-serialization of the parsed body",
+      "evidence": "src/webhooks/webhooks.controller.ts:27-36, src/webhooks/webhooks.service.ts:102-190,279-284, src/common/providers/impl/paystack-gateway.http.ts (verifySignature)"
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks/iap",
+      "guards": [
+        "@Public() \u2014 trust boundary is RECEIPT_VERIFIER verification of the signed payload"
+      ],
+      "roles": [],
+      "scope": "cross-user",
+      "request": {
+        "body": "IapEvent { platform?: 'ios'|'android', productId?: string, receipt?: string, businessId?: string (present on some provider payloads but NEVER read), notificationType?: string e.g. SUBSCRIBED/DID_RENEW/EXPIRED/CANCELLED }"
+      },
+      "response": {
+        "status": 200,
+        "body": "$ref WebhookAck. Tenant binding is SERVER-SIDE ONLY: the verified store transaction id is looked up as the BillingTransaction primary key persisted by POST /billing/verify-receipt; no binding -> acked + ignored (processed:false, warn log). Bundle products (oweme_credits_N) are a no-op here (credited only at verify-receipt; re-crediting would double-apply). Plan products apply the subscription lifecycle to the BOUND tenant; expiry types fail the plan CLOSED to starter. The webhook writes NO BillingTransaction rows and NO ledger credits anymore",
+        "errors": [
+          "401 UNAUTHENTICATED (malformed or unverifiable payload)"
+        ]
+      },
+      "uncertain": null,
+      "evidence": "src/webhooks/webhooks.controller.ts:39-43, src/webhooks/webhooks.service.ts:200-277"
+    }
+  ],
+  "schema": [
+    {
+      "entity": "Business",
+      "table": "Business",
+      "columns": [
+        {
+          "name": "id",
+          "type": "String",
+          "nullable": false,
+          "unique": true,
+          "note": "@id, client/server-minted UUIDv7"
+        },
+        {
+          "name": "businessName",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "ownerName",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "phone",
+          "type": "String",
+          "nullable": false,
+          "note": "digits-only"
+        },
+        {
+          "name": "category",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "currency",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "reminderTone",
+          "type": "String",
+          "nullable": false,
+          "note": "gentle|friendly|final"
+        },
+        {
+          "name": "plan",
+          "type": "String",
+          "nullable": false,
+          "note": "default 'starter'; canonical starter|market|business|wholesale|enterprise, fail-closed to starter"
+        },
+        {
+          "name": "bvumCeilingOverride",
+          "type": "BigInt",
+          "nullable": true,
+          "note": "kobo; rev 2 enterprise banding, sales-provisioned; null -> plan ceiling; NOT exposed on the wire Business shape"
+        },
+        {
+          "name": "paystackSubaccount",
+          "type": "String",
+          "nullable": true
+        },
+        {
+          "name": "logoUrl",
+          "type": "String",
+          "nullable": true
+        },
+        {
+          "name": "branchId",
+          "type": "String",
+          "nullable": true,
+          "note": "reserved, unused"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "nullable": false,
+          "note": "@updatedAt"
+        },
+        {
+          "name": "version",
+          "type": "Int",
+          "nullable": false,
+          "note": "default 0, If-Match concurrency"
+        }
+      ],
+      "relations": [
+        "staff Staff[]",
+        "customers Customer[]",
+        "debts Debt[]",
+        "payments Payment[]",
+        "reminders Reminder[]",
+        "notifications Notification[]",
+        "billingTransactions BillingTransaction[]",
+        "notificationPreferences NotificationPreferences? (1:1)",
+        "payoutAccount PayoutAccount? (1:1)",
+        "subscription Subscription? (1:1)",
+        "creditLedger CreditLedger? (1:1)"
+      ],
+      "deleteSemantics": "NO delete path anywhere (no endpoint, no soft-delete column). Tenant root \u2014 admin must never hard-delete; every child row FKs to it."
+    },
+    {
+      "entity": "Staff",
+      "table": "Staff",
+      "columns": [
+        {
+          "name": "id",
+          "type": "String",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "businessId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "nullable": false,
+          "note": "placeholder 'Invited \u00b7 <phone>' / 'Owner \u00b7 <phone>' until set"
+        },
+        {
+          "name": "phone",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "role",
+          "type": "String",
+          "nullable": false,
+          "note": "owner|staff; owner unique per business by convention"
+        },
+        {
+          "name": "active",
+          "type": "Boolean",
+          "nullable": false,
+          "note": "default true"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "version",
+          "type": "Int",
+          "nullable": false
+        }
+      ],
+      "relations": [
+        "business Business (businessId)",
+        "refreshTokens RefreshToken[]"
+      ],
+      "uniques": [
+        "@@unique([businessId, phone])"
+      ],
+      "indexes": [
+        "@@index([businessId])"
+      ],
+      "deleteSemantics": "NO delete path. Deactivation only (active=false via PATCH /staff/:id); the owner row can never be deactivated. Staff.id is the JWT sub \u2014 deleting a row orphans live sessions and RefreshToken FKs."
+    },
+    {
+      "entity": "OtpCode",
+      "table": "OtpCode",
+      "columns": [
+        {
+          "name": "id",
+          "type": "String",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "phone",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "codeHash",
+          "type": "String",
+          "nullable": false,
+          "note": "code hashed at rest"
+        },
+        {
+          "name": "expiresAt",
+          "type": "DateTime",
+          "nullable": false,
+          "note": "10-min TTL"
+        },
+        {
+          "name": "attempts",
+          "type": "Int",
+          "nullable": false,
+          "note": "default 0, max 5"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "nullable": false
+        }
+      ],
+      "relations": [],
+      "indexes": [
+        "@@index([phone])"
+      ],
+      "deleteSemantics": "HARD delete: deleteMany({phone}) consumes all outstanding codes on successful verify (src/auth/auth.service.ts:87). Expired rows are never purged (no scheduler) \u2014 they accumulate."
+    },
+    {
+      "entity": "RefreshToken",
+      "table": "RefreshToken",
+      "columns": [
+        {
+          "name": "id",
+          "type": "String",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "userId",
+          "type": "String",
+          "nullable": false,
+          "note": "references Staff.id"
+        },
+        {
+          "name": "tokenHash",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "rotatedFrom",
+          "type": "String",
+          "nullable": true,
+          "note": "rotation chain link"
+        },
+        {
+          "name": "revokedAt",
+          "type": "DateTime",
+          "nullable": true,
+          "note": "soft revocation; non-null revokedAt + reuse -> whole-chain revoke"
+        },
+        {
+          "name": "expiresAt",
+          "type": "DateTime",
+          "nullable": false,
+          "note": "30 days"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "nullable": false
+        }
+      ],
+      "relations": [
+        "user Staff (userId)"
+      ],
+      "indexes": [
+        "@@index([userId])",
+        "@@index([tokenHash])"
+      ],
+      "deleteSemantics": "SOFT revoke only (revokedAt set); rows are never deleted. Rotation history is the reuse-detection evidence \u2014 do not prune casually."
+    },
+    {
+      "entity": "Customer",
+      "table": "Customer",
+      "columns": [
+        {
+          "name": "id",
+          "type": "String",
+          "nullable": false,
+          "unique": true,
+          "note": "client-minted UUIDv7"
+        },
+        {
+          "name": "businessId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "phone",
+          "type": "String",
+          "nullable": false,
+          "note": "default ''"
+        },
+        {
+          "name": "address",
+          "type": "String",
+          "nullable": true
+        },
+        {
+          "name": "note",
+          "type": "String",
+          "nullable": true
+        },
+        {
+          "name": "deleted",
+          "type": "Boolean",
+          "nullable": false,
+          "note": "default false; SOFT-DELETE flag; deleted rows surface as sync tombstones"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "version",
+          "type": "Int",
+          "nullable": false
+        }
+      ],
+      "relations": [
+        "business Business (businessId)",
+        "debts Debt[]"
+      ],
+      "indexes": [
+        "@@index([businessId])"
+      ],
+      "deleteSemantics": "SOFT delete (deleted=true + version++), owner-only, CASCADE soft-archives the customer's non-deleted debts in the same transaction (src/customers/customers.service.ts:158-174). No restore endpoint for customers. Admin must mirror: never hard-delete."
+    },
+    {
+      "entity": "Debt",
+      "table": "Debt",
+      "columns": [
+        {
+          "name": "id",
+          "type": "String",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "businessId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "customerId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "amount",
+          "type": "Int",
+          "nullable": false,
+          "note": "kobo principal"
+        },
+        {
+          "name": "note",
+          "type": "String",
+          "nullable": true
+        },
+        {
+          "name": "dueDate",
+          "type": "DateTime",
+          "nullable": true
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "lastReminderAt",
+          "type": "DateTime",
+          "nullable": true,
+          "note": "written by the reminder dispatch cron on every successful scheduled dispatch (src/reminders/reminder-dispatch.service.ts touchDebt); still untouched by the immediate POST /reminders path"
+        },
+        {
+          "name": "nextReminderAt",
+          "type": "DateTime",
+          "nullable": true,
+          "note": "CLEARED on webhook settle; SET/recomputed by the reminder dispatch cron to the earliest still-pending scheduled reminder of the debt (null when none)"
+        },
+        {
+          "name": "deleted",
+          "type": "Boolean",
+          "nullable": false,
+          "note": "SOFT-DELETE/archive flag"
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "version",
+          "type": "Int",
+          "nullable": false
+        }
+      ],
+      "relations": [
+        "business Business (businessId)",
+        "customer Customer (customerId)",
+        "payments Payment[]",
+        "reminders Reminder[]"
+      ],
+      "indexes": [
+        "@@index([businessId])",
+        "@@index([customerId])"
+      ],
+      "deleteSemantics": "SOFT delete (deleted=true + version++), owner-only; POST /debts/:id/restore un-archives (any role). Surfaces as sync tombstone. Status/paid/remaining are DERIVED (never stored)."
+    },
+    {
+      "entity": "Payment",
+      "table": "Payment",
+      "columns": [
+        {
+          "name": "id",
+          "type": "String",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "businessId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "debtId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "amount",
+          "type": "Int",
+          "nullable": false,
+          "note": "kobo"
+        },
+        {
+          "name": "method",
+          "type": "String",
+          "nullable": false,
+          "note": "verbatim; 'Paystack link' for webhook-recorded"
+        },
+        {
+          "name": "reference",
+          "type": "String",
+          "nullable": false,
+          "note": "server-minted OWM-##### or the Paystack charge reference (webhook idempotency key)"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "version",
+          "type": "Int",
+          "nullable": false
+        }
+      ],
+      "relations": [
+        "business Business (businessId)",
+        "debt Debt (debtId)"
+      ],
+      "indexes": [
+        "@@index([businessId])",
+        "@@index([debtId])"
+      ],
+      "deleteSemantics": "HARD delete, but ONLY via POST /debts/:id/undo-payment (most-recent payment of a debt). NO soft-delete column -> deletes produce NO sync tombstone (documented v1 limitation, src/sync/sync.service.ts:85-88): offline clients only reconcile via full pull. Admin deletes here would silently desync devices."
+    },
+    {
+      "entity": "Reminder",
+      "table": "Reminder",
+      "columns": [
+        {
+          "name": "id",
+          "type": "String",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "businessId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "debtId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "channel",
+          "type": "String",
+          "nullable": false,
+          "note": "sms|whatsapp|call|manual|printable; sms/whatsapp metered 5 credits"
+        },
+        {
+          "name": "status",
+          "type": "String",
+          "nullable": false,
+          "note": "scheduled|sent|failed"
+        },
+        {
+          "name": "message",
+          "type": "String",
+          "nullable": true
+        },
+        {
+          "name": "scheduledFor",
+          "type": "DateTime",
+          "nullable": true
+        },
+        {
+          "name": "sentAt",
+          "type": "DateTime",
+          "nullable": true
+        },
+        {
+          "name": "payLinkUrl",
+          "type": "String",
+          "nullable": true
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "version",
+          "type": "Int",
+          "nullable": false
+        }
+      ],
+      "relations": [
+        "business Business (businessId)",
+        "debt Debt (debtId)"
+      ],
+      "indexes": [
+        "@@index([businessId])",
+        "@@index([debtId])"
+      ],
+      "deleteSemantics": "NO delete path of any kind and no soft-delete column; sync tombstones structurally empty. Append + status transitions only: scheduled -> sent|failed via the per-minute dispatch cron (atomic updateMany WHERE status='scheduled' claim \u2014 count 0 means another tick owns the row, so replicas never double-send/double-debit), failed -> sent via POST /reminders/:id/retry. ADMIN RISK unchanged: flipping a row to 'failed' makes it retryable; flipping a row to 'scheduled' with a past scheduledFor makes the cron send it within a minute."
+    },
+    {
+      "entity": "Notification",
+      "table": "Notification",
+      "columns": [
+        {
+          "name": "id",
+          "type": "String",
+          "nullable": false,
+          "unique": true
+        },
+        {
+          "name": "businessId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "title",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "body",
+          "type": "String",
+          "nullable": false,
+          "note": "default ''"
+        },
+        {
+          "name": "kind",
+          "type": "String",
+          "nullable": false,
+          "note": "payment|overdue|reminder|insight|info, default 'info'"
+        },
+        {
+          "name": "read",
+          "type": "Boolean",
+          "nullable": false,
+          "note": "default false"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "version",
+          "type": "Int",
+          "nullable": false
+        }
+      ],
+      "relations": [
+        "business Business (businessId)"
+      ],
+      "indexes": [
+        "@@index([businessId])"
+      ],
+      "deleteSemantics": "NO delete path; only read-flag updates (mark-all-read). Rows ARE now created by live code (maintenance pass): the Paystack webhook (kind 'payment') and the reminder dispatch cron (kind 'reminder'). Server-minted UUIDv7 ids."
+    },
+    {
+      "entity": "NotificationPreferences",
+      "table": "NotificationPreferences",
+      "columns": [
+        {
+          "name": "businessId",
+          "type": "String",
+          "nullable": false,
+          "unique": true,
+          "note": "@id \u2014 one row per business"
+        },
+        {
+          "name": "payments",
+          "type": "Boolean",
+          "nullable": false,
+          "note": "default true"
+        },
+        {
+          "name": "overdue",
+          "type": "Boolean",
+          "nullable": false,
+          "note": "default true"
+        },
+        {
+          "name": "delivery",
+          "type": "Boolean",
+          "nullable": false,
+          "note": "default true"
+        },
+        {
+          "name": "weekly",
+          "type": "Boolean",
+          "nullable": false,
+          "note": "default false"
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "nullable": false
+        },
+        {
+          "name": "version",
+          "type": "Int",
+          "nullable": false
+        }
+      ],
+      "relations": [
+        "business Business (businessId)"
+      ],
+      "deleteSemantics": "NO delete path; upsert-only (lazily created on first GET)."
+    },
+    {
+      "entity": "PayoutAccount",
+      "table": "PayoutAccount",
+      "columns": [
+        {
+          "name": "businessId",
+          "type": "String",
+          "nullable": false,
+          "unique": true,
+          "note": "@id \u2014 one row per business"
+        },
+        {
+          "name": "bankCode",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "accountNumber",
+          "type": "String",
+          "nullable": false,
+          "note": "10-digit NUBAN"
+        },
+        {
+          "name": "accountName",
+          "type": "String",
+          "nullable": false,
+          "note": "resolved via Paystack"
+        }
+      ],
+      "relations": [
+        "business Business (businessId)"
+      ],
+      "deleteSemantics": "NO delete path; upsert-only. Coupled to Business.paystackSubaccount (written together on PUT /payout-account)."
+    },
+    {
+      "entity": "Plan",
+      "table": "Plan",
+      "columns": [
+        {
+          "name": "id",
+          "type": "String",
+          "nullable": false,
+          "unique": true,
+          "note": "@id; canonical ids per seed + enums: starter|market|business|wholesale|enterprise (schema comment fixed by the maintenance pass; no column change)"
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "pricePerMonth",
+          "type": "Int",
+          "nullable": false,
+          "note": "kobo, 0 = free"
+        },
+        {
+          "name": "tagline",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "features",
+          "type": "Json",
+          "nullable": false,
+          "note": "string[]"
+        },
+        {
+          "name": "productId",
+          "type": "String",
+          "nullable": true,
+          "note": "IAP product id; join key for verify-receipt/webhook plan routing"
+        },
+        {
+          "name": "talkToSales",
+          "type": "Boolean",
+          "nullable": false
+        },
+        {
+          "name": "recommended",
+          "type": "Boolean",
+          "nullable": false
+        },
+        {
+          "name": "creditsPerMonth",
+          "type": "Int",
+          "nullable": false,
+          "note": "unified OweMe credits/month, -1 fair-use"
+        },
+        {
+          "name": "staffSeats",
+          "type": "Int",
+          "nullable": false,
+          "note": "-1 unlimited"
+        },
+        {
+          "name": "bvumCeiling",
+          "type": "BigInt",
+          "nullable": true,
+          "note": "kobo; rev 2 seeds concrete values for every tier"
+        }
+      ],
+      "relations": [],
+      "deleteSemantics": "Seeded reference catalog (prisma/seed.ts, 5 rows); NO runtime writes or deletes. Entitlements, seat caps, credit grants and BVUM ceilings all resolve from it \u2014 deleting/renaming a row breaks fail-closed lookups."
+    },
+    {
+      "entity": "Subscription",
+      "table": "Subscription",
+      "columns": [
+        {
+          "name": "businessId",
+          "type": "String",
+          "nullable": false,
+          "unique": true,
+          "note": "@id \u2014 one row per business"
+        },
+        {
+          "name": "planId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "entitlementState",
+          "type": "String",
+          "nullable": false,
+          "note": "none|pending|active|gracePeriod|expired"
+        },
+        {
+          "name": "activePlanId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "renewalAt",
+          "type": "DateTime",
+          "nullable": true
+        }
+      ],
+      "relations": [
+        "business Business (businessId)"
+      ],
+      "deleteSemantics": "NO delete path; upsert-only from billing verify-receipt and the IAP webhook. Server is the SOLE entitlement authority; kept in lockstep with Business.plan (fail-closed to starter on expiry)."
+    },
+    {
+      "entity": "BillingTransaction",
+      "table": "BillingTransaction",
+      "columns": [
+        {
+          "name": "id",
+          "type": "String",
+          "nullable": false,
+          "unique": true,
+          "note": "@id = STORE TRANSACTION ID \u2014 the IAP idempotency key"
+        },
+        {
+          "name": "businessId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "kind",
+          "type": "String",
+          "nullable": false,
+          "note": "LIVE values: 'subscription'|'credits-bundle' (schema comment fixed by the maintenance pass; no column change)"
+        },
+        {
+          "name": "productId",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "label",
+          "type": "String",
+          "nullable": false
+        },
+        {
+          "name": "amount",
+          "type": "Int",
+          "nullable": false,
+          "note": "kobo; 0 for webhook-recorded bundle rows"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "nullable": false
+        }
+      ],
+      "relations": [
+        "business Business (businessId)"
+      ],
+      "indexes": [
+        "@@index([businessId])"
+      ],
+      "deleteSemantics": "Append-only; NO delete or update path. ONLY writer is now POST /billing/verify-receipt (the IAP webhook no longer inserts rows). Triples as (a) IAP idempotency ledger, (b) the counter for the 2-bundles-per-calendar-month hard cap, and (c) the SERVER-SIDE tenant binding the IAP webhook resolves store transactions through \u2014 deleting a row severs webhook attribution for that transaction; admin-inserted rows of kind 'credits-bundle' consume a trader's monthly cap."
+    },
+    {
+      "entity": "CreditLedger",
+      "table": "CreditLedger",
+      "columns": [
+        {
+          "name": "businessId",
+          "type": "String",
+          "nullable": false,
+          "unique": true,
+          "note": "@id \u2014 the ONE unified rev 2 'OweMe credits' ledger per business"
+        },
+        {
+          "name": "balance",
+          "type": "Int",
+          "nullable": false,
+          "note": "default 0; bundle top-ups above the grant carry over month to month"
+        },
+        {
+          "name": "monthlyGrant",
+          "type": "Int",
+          "nullable": false,
+          "note": "default 0; -1 = fair-use (unmetered, never blocks)"
+        },
+        {
+          "name": "periodStart",
+          "type": "DateTime",
+          "nullable": false,
+          "note": "calendar-month UTC period; refill applied LAZILY on read/debit, no scheduler"
+        }
+      ],
+      "relations": [
+        "business Business (businessId)"
+      ],
+      "deleteSemantics": "NO delete path; lazily created and refilled by CreditLedgerService.ensure. Weighted debits: reminderSend 5, voiceParse 1, insightOrRisk 4 (latter unwired). Admin credit grants should go through creditCredits semantics (increment), not raw balance writes, to preserve carry-over rules."
+    }
+  ],
+  "auth": {
+    "mode": "local",
+    "files": {
+      "otpFlow": [
+        "src/auth/auth.controller.ts",
+        "src/auth/auth.service.ts (request/verify OTP, throttles, placeholder-tenant minting)",
+        "src/auth/auth.crypto.ts (generateOtp/hashOtpCode/verifyOtpCode/hashToken)",
+        "src/common/providers/otp-sender.ts + src/common/providers/impl/bulksms-otp-sender.ts (BulkSMS Nigeria v2 SMS, gateway 'otp', MSISDN normalisation)"
+      ],
+      "tokenIssuance": [
+        "src/auth/auth-token.service.ts (signAccess 15m JWT_ACCESS_SECRET; signRefresh 30d JWT_REFRESH_SECRET + unique jti)"
+      ],
+      "tokenValidation": [
+        "src/common/strategies/jwt.strategy.ts (passport-jwt bearer, JWT_ACCESS_SECRET, dev fallback 'dev-access-secret-change-me')",
+        "src/common/guards/jwt-auth.guard.ts (global; honors @Public; 401 UNAUTHENTICATED)",
+        "src/common/guards/roles.guard.ts (@Roles; owner passes any gate)"
+      ],
+      "refreshRotation": [
+        "src/auth/auth.service.ts refresh(): verify sig -> lookup by tokenHash -> revokedAt set means REUSE: revoke user's entire live chain then 401 -> expiry check -> revoke presented token -> issue new pair linked via rotatedFrom. logout() revokes all live tokens for the user."
+      ],
+      "principal": [
+        "src/common/decorators/current-user.decorator.ts (@CurrentUser)",
+        "src/common/tenancy/tenant.ts (@BusinessId, requireBusinessId -> 403 when claim null)"
+      ]
+    },
+    "claims": {
+      "accessToken": {
+        "sub": "Staff.id",
+        "businessId": "string|null (tenant)",
+        "role": "'owner'|'staff'",
+        "exp": "15m"
+      },
+      "refreshToken": {
+        "sub": "Staff.id",
+        "businessId": "string",
+        "role": "Role",
+        "jti": "uuidv7 (uniqueness for hash-based storage)",
+        "exp": "30d"
+      }
+    },
+    "notes": "ENTIRELY protected surface. No SSO; phone + 6-digit OTP via BulkSMSNigeria (stub when BULKSMS_API_TOKEN absent). OTP: hashed at rest, 10-min TTL, max 5 attempts (429), silent throttle 30/phone and 120/ip per rolling minute (always 202). verify-otp auto-provisions a placeholder Business + owner Staff for unknown phones. Refresh tokens stored ONLY as hashes with rotation chain + reuse detection. Secrets: JWT_ACCESS_SECRET / JWT_REFRESH_SECRET with insecure dev fallbacks. Admin auth (per conventions.md) must use a SEPARATE AdminUser table + ADMIN_JWT_SECRET and never touch these files; cross-rejection must be tested both directions."
+  },
+  "sideEffects": [
+    {
+      "trigger": "POST /webhooks/paystack with a verified charge.success",
+      "effect": "Creates a Payment row (method 'Paystack link', reference = Paystack charge reference) against metadata.debtId UNCONDITIONALLY and in full \u2014 the charge-recording invariant added by the maintenance pass: archived debts and overpayments are recorded, never rejected (the webhook still has NO overpayment guard, by design; remaining derives to 0). Clears Debt.nextReminderAt at paidTotal >= principal. Creates exactly one Notification row (kind 'payment') per charge: 'Payment received', or the anomaly flags 'Archived debt received a payment' (debt stays archived) / 'Debt overpaid' (with the excess). Idempotent on reference. ADMIN RISK: an admin-created Payment carrying a colliding reference suppresses webhook reconciliation AND its owner-facing notification.",
+      "location": "src/webhooks/webhooks.service.ts:102-190,279-284"
+    },
+    {
+      "trigger": "POST /webhooks/iap with a verifier-approved signed payload",
+      "effect": "Tenant resolved ONLY from the BillingTransaction row keyed by the verified store transaction id (persisted at verify-receipt time); body.businessId is never read; unbound events are acked + ignored with a warn log. Bundle productIds (oweme_credits_N) are a NO-OP here \u2014 credits are granted solely at verify-receipt, so webhook retries can never double-apply. Plan productIds -> Business.plan + Subscription upsert on the bound tenant; notificationType in {EXPIRED, CANCELLED, DID_FAIL_TO_RENEW, REVOKE, GRACE_PERIOD_EXPIRED} fails the plan CLOSED to starter. The webhook writes NO BillingTransaction rows and touches NO ledger (WebhooksModule no longer imports UsageModule). ADMIN RISK: deleting a BillingTransaction row severs the tenant binding for future notifications on that transaction.",
+      "location": "src/webhooks/webhooks.service.ts:200-277, src/webhooks/webhooks.module.ts"
+    },
+    {
+      "trigger": "Per-minute cron tick (ReminderDispatchService.dispatchDueReminders, @Cron EVERY_MINUTE via @nestjs/schedule; NOT an HTTP endpoint)",
+      "effect": "Claims up to 100 due rows (status 'scheduled', scheduledFor <= now) with an atomic updateMany WHERE status='scheduled' transition (double-send/double-debit safe across replicas; in-process latch prevents overlapping ticks). sms: debits 5 unified credits BEFORE dispatch via MESSAGE_SENDER; insufficient credits -> 'failed' reason insufficient-credits (nothing debited); provider rejection -> 'failed' reason delivery-failed (NO refund; retry re-debits). whatsapp: always 'failed' reason unsupported-server-channel (no server WhatsApp API; no silent SMS fallback). call|manual|printable: 'sent' free. Every terminal transition bumps Reminder.version, stamps the parent Debt (lastReminderAt on sent, recomputed nextReminderAt, version bump for delta sync) and writes a Notification row (kind 'reminder': 'Reminder sent'/'Reminder failed'). ADMIN RISK: any admin write that sets status 'scheduled' with a past scheduledFor triggers a real SMS + credit debit within a minute.",
+      "location": "src/reminders/reminder-dispatch.service.ts, src/reminders/reminders.module.ts, src/app.module.ts (ScheduleModule.forRoot())"
+    },
+    {
+      "trigger": "POST /billing/verify-receipt (owner, in-app purchase)",
+      "effect": "External IAP verification (Apple verifyReceipt with sandbox/production 21007/21008 retry; Google Play Developer API via service-account JWT). Plan product -> Business.plan + Subscription (30-day renewalAt). Bundle product -> CreditLedger credit, HARD CAP 2 bundle receipts per business per calendar month counted from BillingTransaction rows kind 'credits-bundle'. ADMIN RISK: inserting BillingTransaction rows consumes traders' bundle caps; editing Business.plan out-of-band diverges from Subscription.",
+      "location": "src/billing/billing.service.ts:77-127, src/common/providers/impl/iap-receipt-verifier.ts, src/billing/bundle-catalog.ts"
+    },
+    {
+      "trigger": "POST /reminders (immediate sms|whatsapp) and POST /reminders/:id/retry",
+      "effect": "Debits 5 OweMe credits from CreditLedger BEFORE dispatching a REAL SMS through MESSAGE_SENDER (BulkSMS Nigeria; the 'whatsapp' channel deliberately falls back to SMS). Exhaustion -> 403 PLAN_REQUIRED with no row/no send. ADMIN RISK: admin credit grants/zeroing instantly change whether trader reminders send; admin flipping a Reminder row to 'failed' would make it retryable (double delivery + double debit).",
+      "location": "src/reminders/reminders.service.ts:100-192, src/common/providers/impl/bulksms-message-sender.ts, src/usage/credit-ledger.service.ts:51-65"
+    },
+    {
+      "trigger": "POST /auth/request-otp",
+      "effect": "Creates an OtpCode row and sends a REAL SMS via OTP_SENDER (BulkSMS Nigeria) unless throttled. ADMIN RISK for test-account OTP-viewing tooling: codes are stored HASHED (codeHash) \u2014 the planned 'view current OTP' power cannot read codes from this table as-is.",
+      "location": "src/auth/auth.service.ts:45-59, src/common/providers/impl/bulksms-otp-sender.ts"
+    },
+    {
+      "trigger": "POST /voice/parse",
+      "effect": "Calls the external LLM (Gemini generateContent, structured JSON output) through LLM_PROVIDER, then debits 1 credit on success only.",
+      "location": "src/voice/voice.service.ts, src/common/providers/impl/gemini-llm-provider.ts"
+    },
+    {
+      "trigger": "POST /debts (create)",
+      "effect": "Instant BVUM ceiling enforcement reads Plan.bvumCeiling and Business.bvumCeilingOverride. ADMIN RISK: admin plan-force / enterprise-band writes take effect on the very next debt creation (403 BVUM_CEILING appears/disappears immediately).",
+      "location": "src/debts/debts.service.ts:163-167, src/bvum/bvum.service.ts:62-77,91-102"
+    },
+    {
+      "trigger": "POST /debts/:id/pay-link",
+      "effect": "External payment-gateway transaction initialize (Paystack or Flutterwave per PAYMENT_PROVIDER env) with subaccount split: OweMe 1% (cap N500) as transactionCharge; metadata {debtId, businessId, customerId} is what the webhook later trusts. Disclosed fee is the single combined 2.5%+N100 (cap N2500) figure.",
+      "location": "src/debts/debts.service.ts:239-256, src/debts/pay-link-fees.ts, src/common/common.module.ts:53-67"
+    },
+    {
+      "trigger": "PUT /payout-account",
+      "effect": "External gateway createSubaccount, then writes PayoutAccount AND Business.paystackSubaccount. All subsequent pay-links split against that subaccount.",
+      "location": "src/payout-account/payout-account.service.ts:54-87"
+    },
+    {
+      "trigger": "ANY read/debit of the credit ledger (GET /usage, reminder/voice debits, billing balance reads)",
+      "effect": "Lazy ledger lifecycle: creates the CreditLedger from the plan grant if absent; at calendar-month rollover refills balance to max(current balance, plan grant) \u2014 purchased credits carry over; fair-use -1 never meters. Ledger refill has NO scheduler and remains lazy-on-read (@nestjs/schedule IS now installed, but its ONLY consumer is the reminder dispatch cron \u2014 it never touches the ledger lifecycle). ADMIN RISK: admin plan changes alter the next refill; raw balance writes bypass carry-over semantics; the dispatch cron debits this same ledger, so zeroing a balance flips pending scheduled reminders to 'failed'.",
+      "location": "src/usage/credit-ledger.service.ts:97-125, src/usage/period.util.ts"
+    },
+    {
+      "trigger": "Provider selection at boot",
+      "effect": "Real vs deterministic-stub providers chosen SOLELY by env credentials in one place: BULKSMS_API_TOKEN (OTP + messages), PAYMENT_PROVIDER + PAYSTACK_SECRET_KEY / FLUTTERWAVE_SECRET_KEY (gateway incl. webhook signature verification), APPLE_IAP_SHARED_SECRET / GOOGLE_PLAY_SERVICE_ACCOUNT_JSON (IAP), GEMINI_API_KEY (LLM). With keys absent, webhooks/sends/verifies run against stubs.",
+      "location": "src/common/common.module.ts:38-111"
+    }
+  ],
+  "coverage": {
+    "controllers": 20,
+    "controllerClasses": 21,
+    "controllerList": [
+      "auth (AuthController + MeController)",
+      "business",
+      "plans",
+      "staff",
+      "usage",
+      "customers",
+      "debts",
+      "payments",
+      "reminders",
+      "notifications",
+      "notification-preferences",
+      "payout-account",
+      "billing",
+      "voice",
+      "insights",
+      "bvum",
+      "dashboard",
+      "activity",
+      "sync",
+      "webhooks"
+    ],
+    "models": 15,
+    "modelList": [
+      "Business",
+      "Staff",
+      "OtpCode",
+      "RefreshToken",
+      "Customer",
+      "Debt",
+      "Payment",
+      "Reminder",
+      "Notification",
+      "NotificationPreferences",
+      "PayoutAccount",
+      "Plan",
+      "Subscription",
+      "BillingTransaction",
+      "CreditLedger"
+    ],
+    "endpointCount": 54,
+    "routeEnumeration": "static \u2014 every route is a literal Nest decorator; no dynamic route generation found; maintenance pass added ZERO endpoints",
+    "workers": [
+      "ReminderDispatchService (src/reminders/reminder-dispatch.service.ts) \u2014 @Cron EVERY_MINUTE scheduled-reminder delivery; no HTTP route; contract spec src/reminders/tests/reminder-dispatch.contract.spec.ts"
+    ]
+  }
+}

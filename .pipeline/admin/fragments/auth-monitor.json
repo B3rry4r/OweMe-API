@@ -1,0 +1,107 @@
+{
+  "screenId": "auth-monitor",
+  "route": "/auth-monitor",
+  "needs": [
+    {
+      "id": "auth-monitor-need-1",
+      "kind": "read",
+      "summary": "Today's OTP auth KPI stats: total OTP requests since midnight, delivery success percentage of today's sends, failed verification count (wrong or expired codes), and rate-limit block count.",
+      "entities": ["OtpRequest", "OtpVerificationAttempt", "RateLimitBlock"],
+      "fields": ["otpRequestsToday", "deliverySuccessPct", "failedVerificationsToday", "rateLimitBlocksToday"],
+      "filters/actions": "Aggregated server-side over the current day (since midnight, Africa/Lagos +01:00 timestamps in fixture); no client parameters.",
+      "adminRole": "both"
+    },
+    {
+      "id": "auth-monitor-need-2",
+      "kind": "read",
+      "summary": "Daily OTP request volume time series for a trailing 14-day window (inclusive), rendered as a sparkline; screen derives total, daily average and peak client-side.",
+      "entities": ["OtpRequest"],
+      "fields": ["startDate", "endDate", "counts (one integer per day, ordered oldest to newest)"],
+      "filters/actions": "Fixed trailing 14-day window ending today; grouped by day server-side.",
+      "adminRole": "both"
+    },
+    {
+      "id": "auth-monitor-need-3",
+      "kind": "read",
+      "summary": "Recent OTP requests list, newest first, with per-request delivery outcome from BulkSMSNigeria, verification attempt count, and whether the number is currently rate limited. Phone numbers may arrive masked or be masked client-side, but full digits are needed for digit-substring search.",
+      "entities": ["OtpRequest"],
+      "fields": ["id", "requestedAt", "phone", "delivery (delivered|pending|failed)", "attempts", "rateLimited"],
+      "filters/actions": "Filter by delivery status (delivered|pending|failed) or by rate-limited flag ('blocked'); free-text search on phone digit substring. Fixture shows 16 rows; a paged admin list per conventions (?page=&limit= returning {data, page, total}) fits.",
+      "adminRole": "both"
+    },
+    {
+      "id": "auth-monitor-need-4",
+      "kind": "read",
+      "summary": "List of test-flagged businesses' phone numbers with each number's current OTP state: owning business name, phone, and seconds until the active code expires (or expired). Server-side query must filter on the test-account flag so real users can never appear.",
+      "entities": ["Business", "TestAccountFlag", "OtpCode"],
+      "fields": ["id", "business (name)", "phone", "expiresInSeconds (or expiresAt)"],
+      "filters/actions": "Implicit filter: test-flagged businesses only, enforced server-side per conventions test-account tooling power 2.",
+      "adminRole": "superadmin"
+    },
+    {
+      "id": "auth-monitor-need-5",
+      "kind": "action",
+      "summary": "Reveal the current OTP code for one test-flagged business's phone (per-row Reveal/Hide toggle). Structurally restricted to test accounts; conventions require the code lookup to filter on the test flag server-side, and as a sensitive superadmin read it should be audit-loggable/on-demand rather than bulk-shipped with the list.",
+      "entities": ["OtpCode", "Business", "TestAccountFlag", "AdminAuditLog"],
+      "fields": ["code", "expiresInSeconds"],
+      "filters/actions": "Action: fetch/reveal current code for a single test-number row; refuse for non-test businesses.",
+      "adminRole": "superadmin"
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "auth-monitor-surf-1",
+      "surface": "KPI stat card row (OTP requests today, delivery success, failed verifications, rate-limit blocks)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:61 destructures authMonitorDemoData; page.tsx:169-193 renders stats.* fixture values from lib/fixtures/authMonitor.ts:43-48"
+    },
+    {
+      "id": "auth-monitor-surf-2",
+      "surface": "OTP volume 14-day sparkline with total/average/peak summary",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:200 <Sparkline data={otpVolume14d.counts}> and page.tsx:82-83 aggregates, all from fixture otpVolume14d (authMonitor.ts:49-53)"
+    },
+    {
+      "id": "auth-monitor-surf-3",
+      "surface": "Recent OTP requests DataTable (time, phone, delivery badge, attempts, blocked)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:239-243 rows={filteredRequests}, derived in page.tsx:67-80 from fixture recentRequests (authMonitor.ts:54-183)"
+    },
+    {
+      "id": "auth-monitor-surf-4",
+      "surface": "SearchInput 'Search by phone digits'",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:224-228 controlled input; filtering happens only client-side over fixture rows (page.tsx:76-77)"
+    },
+    {
+      "id": "auth-monitor-surf-5",
+      "surface": "Delivery status filter Select (all/delivered/pending/failed/rate limited)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:229-234 controlled Select; filter applied client-side to fixture data (page.tsx:70-75)"
+    },
+    {
+      "id": "auth-monitor-surf-6",
+      "surface": "Test numbers DataTable (business, phone, current code, expires in)",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:257-261 rows={testNumbers} straight from fixture (authMonitor.ts:184-241), including hardcoded OTP codes"
+    },
+    {
+      "id": "auth-monitor-surf-7",
+      "surface": "Reveal/Hide code button per test-number row",
+      "liveness": "mock-fixture",
+      "evidence": "page.tsx:150-158 onClick toggles local `revealed` state only (page.tsx:65), exposing the fixture `row.code` at page.tsx:133; no fetch or backend call"
+    },
+    {
+      "id": "auth-monitor-surf-8",
+      "surface": "EmptyState 'No matching requests' for filtered-out table",
+      "liveness": "static",
+      "evidence": "page.tsx:245-249 local copy shown when client-side filter yields zero rows"
+    },
+    {
+      "id": "auth-monitor-surf-9",
+      "surface": "PageHeader title and subtitle copy",
+      "liveness": "static",
+      "evidence": "page.tsx:164-167 hardcoded label copy meant to stay local"
+    }
+  ]
+}

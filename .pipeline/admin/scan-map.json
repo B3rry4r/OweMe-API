@@ -1,0 +1,125 @@
+{
+  "stack": {
+    "framework": "Next.js (App Router)",
+    "version": "16.2.10",
+    "react": "19.2.4",
+    "typescript": "^5",
+    "styling": "Tailwind CSS v4 via @tailwindcss/postcss; OweMe design tokens as CSS custom properties in app/globals.css mapped through @theme inline (bg/card/ink/muted/faint/divider/fill/brand/gold/danger/info + tints); dark mode via prefers-color-scheme media query; card shadow token; .amount utility class for money figures",
+    "fonts": {
+      "loader": "next/font/local, self-hosted TTFs in app/fonts/",
+      "display": "Sora 400/600/700 as --font-sora (headings and amounts, --font-display)",
+      "body": "Inter 400/500/600 as --font-inter (UI text, --font-body)",
+      "note": "layout.tsx comment claims these are the same faces as the mobile app; the app font registry records Space Grotesk, not Sora"
+    },
+    "icons": "lucide-react ^0.525.0",
+    "staticExport": {
+      "config": "next.config.ts: output \"export\", trailingSlash true, images.unoptimized true",
+      "rationale": "client-rendered admin app, all data intended to load client-side against the OweMe admin API, deployable on any static host",
+      "outputDir": "out/ (gitignored, stale local build present on disk)"
+    },
+    "pathAlias": "@/* -> ./* (tsconfig.json)",
+    "routing": "one route group (shell) wraps all authenticated screens in components/shell.tsx chrome; /login sits outside the group; business detail is a static route selecting its record client-side via useSearchParams"
+  },
+  "screens": [
+    {
+      "id": "login",
+      "route": "/login/",
+      "pageFile": "app/login/page.tsx",
+      "fixtureFile": "lib/fixtures/login.ts"
+    },
+    {
+      "id": "overview",
+      "route": "/",
+      "pageFile": "app/(shell)/page.tsx",
+      "fixtureFile": "lib/fixtures/overview.ts"
+    },
+    {
+      "id": "businesses",
+      "route": "/businesses/",
+      "pageFile": "app/(shell)/businesses/page.tsx",
+      "fixtureFile": "lib/fixtures/businesses.ts"
+    },
+    {
+      "id": "business-detail",
+      "route": "/businesses/detail/",
+      "pageFile": "app/(shell)/businesses/detail/page.tsx",
+      "fixtureFile": "lib/fixtures/businessDetail.ts"
+    },
+    {
+      "id": "debts",
+      "route": "/debts/",
+      "pageFile": "app/(shell)/debts/page.tsx",
+      "fixtureFile": "lib/fixtures/debts.ts"
+    },
+    {
+      "id": "reminders",
+      "route": "/reminders/",
+      "pageFile": "app/(shell)/reminders/page.tsx",
+      "fixtureFile": "lib/fixtures/reminders.ts"
+    },
+    {
+      "id": "billing",
+      "route": "/billing/",
+      "pageFile": "app/(shell)/billing/page.tsx",
+      "fixtureFile": "lib/fixtures/billing.ts"
+    },
+    {
+      "id": "credits",
+      "route": "/credits/",
+      "pageFile": "app/(shell)/credits/page.tsx",
+      "fixtureFile": "lib/fixtures/credits.ts"
+    },
+    {
+      "id": "pay-links",
+      "route": "/pay-links/",
+      "pageFile": "app/(shell)/pay-links/page.tsx",
+      "fixtureFile": "lib/fixtures/payLinks.ts"
+    },
+    {
+      "id": "payouts",
+      "route": "/payouts/",
+      "pageFile": "app/(shell)/payouts/page.tsx",
+      "fixtureFile": "lib/fixtures/payouts.ts"
+    },
+    {
+      "id": "auth-monitor",
+      "route": "/auth-monitor/",
+      "pageFile": "app/(shell)/auth-monitor/page.tsx",
+      "fixtureFile": "lib/fixtures/authMonitor.ts"
+    },
+    {
+      "id": "ai-usage",
+      "route": "/ai-usage/",
+      "pageFile": "app/(shell)/ai-usage/page.tsx",
+      "fixtureFile": "lib/fixtures/aiUsage.ts"
+    },
+    {
+      "id": "audit-log",
+      "route": "/audit-log/",
+      "pageFile": "app/(shell)/audit-log/page.tsx",
+      "fixtureFile": "lib/fixtures/auditLog.ts"
+    },
+    {
+      "id": "admins",
+      "route": "/admins/",
+      "pageFile": "app/(shell)/admins/page.tsx",
+      "fixtureFile": "lib/fixtures/admins.ts"
+    }
+  ],
+  "shared": [
+    "components/shell.tsx",
+    "components/ui.tsx",
+    "lib/nav.ts",
+    "lib/format.ts",
+    "app/(shell)/layout.tsx",
+    "app/layout.tsx",
+    "app/globals.css"
+  ],
+  "sharedKitExports": {
+    "components/ui.tsx": ["PageHeader", "SectionCard", "StatCard", "Badge", "BadgeTone", "Column", "DataTable", "EmptyState", "SearchInput", "Select", "Button", "Meter", "Sparkline", "BarList", "KvList"],
+    "components/shell.tsx": ["Shell (sidebar chrome, mobile slide-over, hardcoded footer identity)"],
+    "lib/nav.ts": ["navSections (single registry of all sidebar routes)"],
+    "lib/format.ts": ["naira", "compactNaira", "formatNumber", "formatDate", "formatDateTime", "maskPhone"]
+  },
+  "fixtureConvention": "One fixture module per screen in lib/fixtures/, imported by exactly one page via the @/lib/fixtures/* alias. Each module exports a typed constant named <screen>DemoData (e.g. overviewDemoData: OverviewDemoData) plus its supporting types and, for business detail, plan metadata helpers (planMeta, planOrder, enterpriseBanding, bundleCapPerMonth). Money is integer kobo formatted through lib/format helpers. README declares the repo is at UI stage: every screen renders *DemoData fixtures and nothing touches the live backend; the *DemoData suffix is the marker for data the admin API must replace."
+}
