@@ -12,8 +12,8 @@
     "4.5-regression-baseline": "DEVIATION, see below",
     "5-admin-auth": "done (wave 1, commit c1bd6c8)",
     "6-build-waves": "done 2026-07-21: wave 2 (12 read resources, 7c29c86), wave 3 (4 action resources + protected-path event instrumentation). Gate: 47 suites, 636 tests, 0 failed.",
-    "7-wire-prune": "next",
-    "8-triple-smoke": "pending"
+    "7-wire-prune": "done 2026-07-21: 14 screens wired to the live API via the generated typed client; lib/fixtures deleted (nothing referenced it). Dashboard commits bd7eed7, cfe342d.",
+    "8-triple-smoke": "done 2026-07-21: (1) admin contracts 47 suites/636 tests green incl. cross-rejection; (2) regression = same suite, live app endpoints unchanged; (3) rendered pass: 13 routes headless, zero console errors, zero placeholder literals, live seeded data visible on every WIRE surface. Orchestrator additionally verified security refusals and action semantics against the running API."
   },
   "deviations": [
     {
@@ -22,5 +22,15 @@
       "why": "The suite is strictly stronger than shape-only generated tests, the protected registry was re-frozen against a verified git diff, and the owner has hit spend limits twice; duplicating 54 endpoint tests is cost without marginal safety.",
       "risk": "If the registry misrecords a shape, an admin DTO could be designed against the wrong shape; mitigated because admin DTOs are new (never reused) and wiring smoke uses live responses."
     }
+  ],
+  "verified": {
+    "securityRefusals": "reset-test on non-test business 403; OTP reveal on non-test business 404 (and the refused attempt is itself audit-logged); support role blocked from grant-credits 403",
+    "actions": "grant credits 201; suspend/unsuspend 201 with 422 on repeat; enterprise bands 3 moves ceiling N40M -> N100M exactly (base + 3 x N20M); bands on non-enterprise 422",
+    "audit": "every action wrote a human-readable audit row with actor identity"
+  },
+  "followUps": [
+    "suspension-enforcement: blocking new debts for suspended businesses is a protected-surface change to debts.service, needs owner authorization",
+    "billing fee derivation: store-fee/net columns ship as honest nulls until the owner rules how store fees are derived per transaction source",
+    "reset-test refusal returns 403 per the frozen registry; owner may prefer 422 (one line)"
   ]
 }
