@@ -1,0 +1,26 @@
+{
+  "pipeline": "admin-surface-extension",
+  "updatedAt": "2026-07-21",
+  "phases": {
+    "0-conventions": "done (conventions.md, owner-ruled 2026-07-20)",
+    "1-ground-truth": "done (protected-registry.json, 54 endpoints, 15 models; re-frozen 2026-07-21 after the owner-authorized maintenance pass)",
+    "2-detect-extract": "done (scan-map.json + 14 fragments with surface audits)",
+    "3-triage": "done (triage.json: 63 needs, 5 gaps, 130 surfaces; defect-handoff.md)",
+    "3.5-rulings": "done (rulings.json, owner-ruled 2026-07-20; defect handoff: ship-with-known-defects)",
+    "maintenance-pass": "done 2026-07-21, OUTSIDE admin scope by owner order: reminder delivery worker, webhook hardening, free manual sends billing fix, consistency cleanup. Gate: 27 suites 0 failed. Commit 54086c6.",
+    "4-registry-schema": "done 2026-07-21 (admin-registry.json FROZEN: 20 resources, 57 endpoints; migration 20260721101459_admin_surface_additive applied, 27 suites green)",
+    "4.5-regression-baseline": "DEVIATION, see below",
+    "5-admin-auth": "in progress (wave 1)",
+    "6-build-waves": "pending",
+    "7-wire-prune": "pending",
+    "8-triple-smoke": "pending"
+  },
+  "deviations": [
+    {
+      "phase": "4.5",
+      "what": "No separate registry-generated regression suite. The repo's authoritative per-suite isolated gate (test/run-isolated.sh, 27 suites covering every live endpoint behaviorally) serves as the regression baseline and wave gate.",
+      "why": "The suite is strictly stronger than shape-only generated tests, the protected registry was re-frozen against a verified git diff, and the owner has hit spend limits twice; duplicating 54 endpoint tests is cost without marginal safety.",
+      "risk": "If the registry misrecords a shape, an admin DTO could be designed against the wrong shape; mitigated because admin DTOs are new (never reused) and wiring smoke uses live responses."
+    }
+  ]
+}

@@ -1,0 +1,1520 @@
+{
+  "generatedAt": "2026-07-21",
+  "generatedBy": "admin-registry design agent (Phase 4, admin-surface-extension)",
+  "frozenInputs": [
+    "protected-registry.json (frozenAt 2026-07-21T00:00:00Z, refrozen after maintenance pass)",
+    "conventions.md (owner-approved 2026-07-20)",
+    "triage.json",
+    "rulings.json (final)",
+    "app-features.json",
+    "fragments/*.json (14 screens)"
+  ],
+  "conventionsSummary": {
+    "namespace": "/admin/*, code tree src/admin/<resource>/ aggregated in a single AdminModule (one app.module.ts registration line total)",
+    "pagination": "offset: ?page=&limit= returning { data, page, total }; app cursor convention untouched",
+    "errorEnvelope": "identical to live API: { error: { code, message, details? }, ...extra } via AppException subclasses through the existing global HttpExceptionFilter",
+    "dtos": "Admin<Entity>View DTOs only; existing app DTOs never reused or widened",
+    "framework": "NestJS 11 + Prisma 6 per protected-registry frameworkProfile; class-validator DTOs, global ValidationPipe, contract specs per resource at src/admin/<resource>/tests/*.contract.spec.ts run under test/run-isolated.sh"
+  },
+  "adminAuth": {
+    "jwtEnvVar": "ADMIN_JWT_SECRET",
+    "refreshJwtEnvVar": "ADMIN_JWT_REFRESH_SECRET",
+    "iss": "oweme-admin",
+    "aud": "admin-dashboard",
+    "roles": ["superadmin", "support"],
+    "tokenDesign": "Access 15m / refresh 30d mirroring the live idiom (src/auth/auth-token.service.ts) but with distinct secrets, iss and aud claims. AdminJwtGuard + AdminRolesGuard live in src/admin/common/ and are applied ONLY on /admin/* controllers; the global user guards see /admin routes as @Public()-excluded admin territory via the admin guards' own rejection. Cross-rejection contract-tested both directions: a valid admin token fails JwtAuthGuard (different secret/claims), a valid user token fails AdminJwtGuard.",
+    "seed": "CLI/seed command creates the first superadmin from env (ADMIN_SEED_EMAIL, ADMIN_SEED_PASSWORD, ADMIN_SEED_NAME); refuses if any AdminUser exists.",
+    "roleMatrix": {
+      "support": "read all monitor surfaces; actions limited to retry-reminder and replay-webhook (both audit-logged)",
+      "superadmin": "everything, incl. billing reads, plan/bands/credits writes, test-account powers, suspension, admin-user management"
+    }
+  },
+  "resources": [
+    {
+      "name": "AdminAuth",
+      "basedOn": "AdminUser (new)",
+      "triageClass": "NEW",
+      "wave": 1,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/admin/auth/login",
+          "adminRoles": ["public"],
+          "request": { "body": { "email": "string (required, email format)", "password": "string (required)" } },
+          "response": { "shape": "AdminSessionView", "errors": ["401 UNAUTHENTICATED (bad credentials or disabled account)", "422 VALIDATION_ERROR"] },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": ["admin_refresh_tokens", "admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["login-need-1"],
+          "designNotes": "Audit action 'login'. Disabled admins are rejected identically to bad credentials (no enumeration). When mustChangePassword=true the session is issued but every /admin/* endpoint except auth/me/change-password returns 403 FORBIDDEN until the password is changed (per replace-invite-with-create ruling)."
+        },
+        {
+          "method": "POST",
+          "path": "/admin/auth/refresh",
+          "adminRoles": ["public"],
+          "request": { "body": { "refreshToken": "string (required)" } },
+          "response": { "shape": "AdminSessionView", "errors": ["401 UNAUTHENTICATED (invalid/revoked/expired; reuse revokes the admin's whole chain, mirroring the live rotation idiom)"] },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": ["admin_refresh_tokens"],
+          "auditLogged": false,
+          "needIds": [],
+          "designNotes": "Rotation + reuse detection copied from the live RefreshToken idiom, on admin_refresh_tokens only."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/auth/me",
+          "adminRoles": ["superadmin", "support"],
+          "request": {},
+          "response": { "shape": "AdminSelfView" },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["login-need-2", "admins-need-2"],
+          "designNotes": "Serves the login footer org copy (static 'OweMe' in the DTO) and the admins screen 'You' badge / self-disable client guard. The server-side self-disable refusal lives on AdminUserManagement."
+        },
+        {
+          "method": "POST",
+          "path": "/admin/auth/change-password",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "body": { "currentPassword": "string (required)", "newPassword": "string (required, min length per codebase convention)" } },
+          "response": { "shape": "{ ok: true }", "errors": ["401 UNAUTHENTICATED (wrong current password)", "422 VALIDATION_ERROR"] },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": ["admin_users", "admin_audit_log"],
+          "auditLogged": true,
+          "needIds": [],
+          "designNotes": "Clears mustChangePassword; revokes all other live admin refresh tokens for the actor. Required leg of the create-with-temp-password ruling."
+        }
+      ],
+      "dtos": {
+        "AdminSessionView": {
+          "accessToken": "string",
+          "refreshToken": "string",
+          "admin": "AdminSelfView"
+        },
+        "AdminSelfView": {
+          "id": "string",
+          "name": "string",
+          "email": "string",
+          "role": "'superadmin'|'support'",
+          "org": "string (static 'OweMe')",
+          "mustChangePassword": "boolean"
+        }
+      }
+    },
+    {
+      "name": "AdminAuditLog",
+      "basedOn": "admin_audit_log (new)",
+      "triageClass": "NEW",
+      "wave": 1,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/audit-log",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20", "adminId": "string?", "actionType": "string?", "targetBusinessId": "string?", "targetBusinessSearch": "string? (business name contains)", "month": "string? YYYY-MM" } },
+          "response": { "shape": "Paged<AdminAuditEntryView>" },
+          "readsExisting": ["Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["audit-log-need-1", "audit-log-need-3", "business-detail-need-12"],
+          "designNotes": "APPEND-ONLY invariant (audit-log-need-3): this resource exposes NO create/update/delete endpoint; rows are written exclusively by other endpoints' audit hook. business-detail's action-log panel is this endpoint filtered by targetBusinessId. Reads gracefully from the empty table (data: [], total: 0)."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/audit-log/admins",
+          "adminRoles": ["superadmin", "support"],
+          "request": {},
+          "response": { "shape": "AdminNameRef[]" },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["audit-log-need-2"],
+          "designNotes": "id+name enumeration only, for the filter dropdown. Deliberately NOT the superadmin-gated admin-users management list: support can see who acted without seeing emails/status."
+        }
+      ],
+      "dtos": {
+        "AdminAuditEntryView": {
+          "id": "string",
+          "at": "string (ISO 8601)",
+          "adminId": "string",
+          "adminName": "string",
+          "adminRole": "'superadmin'|'support'",
+          "actionType": "string (kebab verb, e.g. grant-credits, force-plan, set-enterprise-bands, test-flag, reset-test, suspend, unsuspend, retry-reminder, replay-webhook, create-admin, disable-admin, enable-admin, revoke-admin, reveal-otp, login, change-password)",
+          "action": "string (human-readable sentence)",
+          "targetBusinessId": "string|null",
+          "targetBusinessName": "string|null",
+          "targetType": "string|null",
+          "targetId": "string|null",
+          "before": "object|null",
+          "after": "object|null",
+          "note": "string|null"
+        },
+        "AdminNameRef": { "id": "string", "name": "string" }
+      }
+    },
+    {
+      "name": "AdminSchemaFoundation",
+      "basedOn": "additive schema only (no endpoints)",
+      "triageClass": "NEW",
+      "wave": 1,
+      "endpoints": [],
+      "dtos": {},
+      "designNotes": "Schema-only resource: creates usage_events, otp_request_log, otp_test_codes, webhook_event_log and the additive Business columns (isTest, enterpriseBands, suspendedAt) plus optional RefreshToken.revokedReason. Additive Prisma migration; existing app ORM layer must still compile and boot. No route, no module logic beyond the migration. Population of the event tables is a LATER fenced instrumentation task (see instrumentation[]); every admin read over these tables must render truthfully from empty."
+    },
+    {
+      "name": "AdminOverview",
+      "basedOn": "Business, Subscription, Plan, CreditLedger, Payment, BillingTransaction",
+      "triageClass": "EXTEND",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/overview",
+          "adminRoles": ["superadmin", "support"],
+          "request": {},
+          "response": { "shape": "AdminOverviewView" },
+          "readsExisting": ["Business", "Subscription", "Plan", "CreditLedger", "Payment"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["overview-need-1", "overview-need-2", "overview-need-3", "overview-need-4", "overview-need-5", "overview-need-6"],
+          "designNotes": "MRR = sum of Plan.pricePerMonth over active paid subscriptions; enterprise band premium is NOT priced server-side (price math 25000 + 12500 x bands is display-side per ruling) so enterpriseBandsTotal is returned for the client to add the band component. Credits burned = sum over ledgers of (effective grant - balance) clamped >= 0 for the current period (fair-use -1 ledgers excluded). Pay-link figures = Payment rows with method 'Paystack link'; commission derived via the live pay-link-fees.ts formula (1% capped N500), never persisted. Aggregate read only, no ledger refill side effect is triggered (raw queries, not the app's lazily-refilling UsageService)."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/overview/activity",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "limit": "number? 1..50 default 10" } },
+          "response": { "shape": "AdminPlatformEventView[]" },
+          "readsExisting": ["Business", "BillingTransaction", "Payment"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["overview-need-7"],
+          "designNotes": "Implemented as a read-time UNION view (no new table): Business.createdAt -> 'Business registered'; BillingTransaction kind 'subscription' -> 'Subscription payment'; kind 'credits-bundle' -> 'Credit bundle purchased'; Payment method 'Paystack link' -> 'Pay link recovery'. Fixture-only event kinds with no live source (BVUM ceiling hit, payout account verified) are omitted until instrumented; the feed is honest about what exists and empty-safe."
+        }
+      ],
+      "dtos": {
+        "AdminOverviewView": {
+          "registeredBusinesses": "number",
+          "activePaidSubscriptions": "number",
+          "mrrKobo": "number (flat plan component only)",
+          "enterpriseBandsTotal": "number (sum of Business.enterpriseBands; band price math display-side)",
+          "creditsBurnedThisMonth": "number",
+          "recoveredThisMonthKobo": "number",
+          "commissionThisMonthKobo": "number",
+          "weeklyRecoveredKobo": "number[] (12 entries, oldest first)",
+          "planCounts": "{ starter: number, market: number, business: number, wholesale: number, enterprise: number }"
+        },
+        "AdminPlatformEventView": {
+          "id": "string (synthetic: source-prefixed row id)",
+          "business": "string (display name)",
+          "event": "string (label)",
+          "tone": "'brand'|'gold'|'neutral'|'danger'|'info'",
+          "at": "string (ISO 8601)"
+        }
+      }
+    },
+    {
+      "name": "AdminBusinessesView",
+      "basedOn": "Business",
+      "triageClass": "EXTEND",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/businesses",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20", "search": "string? (name or phone contains)", "plan": "'starter'|'market'|'business'|'wholesale'|'enterprise'?", "status": "'active'|'suspended'|'test'?" } },
+          "response": { "shape": "Paged<AdminBusinessView>" },
+          "readsExisting": ["Business", "Plan", "CreditLedger", "Staff", "Debt"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["businesses-need-1", "businesses-need-2", "businesses-need-3"],
+          "designNotes": "status derives server-side: test (isTest), suspended (suspendedAt != null), else active; the dashboard's 'paused' filter maps to 'suspended' per gap-5 ruling. bvumKobo computed by the same open-principal definition BvumService uses, via read-only queries. ceilingKobo = bvumCeilingOverride ?? Plan.bvumCeiling. creditsGrant null when ledger grant is -1 (enterprise fair use). Owner phone masked server-side (last 4 digits). Unfiltered 'total' in the envelope serves the subtitle count."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/businesses/:id",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "params": { "id": "string" } },
+          "response": { "shape": "AdminBusinessDetailView", "errors": ["404 NOT_FOUND"] },
+          "readsExisting": ["Business", "Plan", "Subscription", "Staff", "CreditLedger", "BillingTransaction"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["business-detail-need-1", "business-detail-need-2", "business-detail-need-4"],
+          "designNotes": "subscriptionState uses the LIVE entitlement vocabulary none|pending|active|gracePeriod|expired (never the fixture's active|grace|canceled). Band pricing is display-side; the DTO carries extraBands plus base and effective ceilings only. bundleCapPerMonth exposed from the live constant (2)."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/businesses/:id/credit-usage",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "params": { "id": "string" } },
+          "response": { "shape": "AdminCreditUsageView", "errors": ["404 NOT_FOUND"] },
+          "readsExisting": ["CreditLedger", "Plan", "Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["business-detail-need-3"],
+          "designNotes": "Per-type counts (sends/parses/insights) read from usage_events for the current ledger period; all zero until the instrumentation task lands (greenlight-via-event-tables ruling). usedCredits falls back to ledger derivation (grant + bonus - balance) so the aggregate meter wires even with an empty event table."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/businesses/:id/debts",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "params": { "id": "string" }, "query": { "page": "number? default 1", "limit": "number? 1..50 default 10" } },
+          "response": { "shape": "Paged<AdminBusinessDebtView>", "errors": ["404 NOT_FOUND"] },
+          "readsExisting": ["Debt", "Customer", "Payment"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["business-detail-need-5"],
+          "designNotes": "Status uses the live derived vocabulary from the registry's DebtView derivation (open|partial|overdue|paid|archived), not the fixture vocab; createdAt desc."
+        }
+      ],
+      "dtos": {
+        "AdminBusinessView": {
+          "id": "string (UUIDv7)",
+          "name": "string",
+          "ownerPhoneMasked": "string",
+          "plan": "'starter'|'market'|'business'|'wholesale'|'enterprise'",
+          "status": "'active'|'suspended'|'test'",
+          "isTest": "boolean",
+          "suspendedAt": "string|null",
+          "bvumKobo": "number",
+          "ceilingKobo": "number",
+          "creditsUsed": "number|null",
+          "creditsGrant": "number|null (null = enterprise fair use)",
+          "staffCount": "number",
+          "joinedAt": "string (ISO 8601)"
+        },
+        "AdminBusinessDetailView": {
+          "id": "string",
+          "name": "string",
+          "plan": "'starter'|'market'|'business'|'wholesale'|'enterprise'",
+          "isTest": "boolean",
+          "suspendedAt": "string|null",
+          "ownerPhoneMasked": "string",
+          "joinedAt": "string",
+          "staffSeatsUsed": "number",
+          "staffSeatsTotal": "number",
+          "subscriptionState": "'none'|'pending'|'active'|'gracePeriod'|'expired'",
+          "renewalAt": "string|null",
+          "bvumKobo": "number",
+          "baseCeilingKobo": "number (Plan.bvumCeiling)",
+          "extraBands": "number (Business.enterpriseBands)",
+          "effectiveCeilingKobo": "number (bvumCeilingOverride ?? baseCeilingKobo)",
+          "bundlesBoughtThisMonth": "number",
+          "bundleCapPerMonth": "number"
+        },
+        "AdminCreditUsageView": {
+          "sends": "number (0 until usage_events populated)",
+          "parses": "number (0 until usage_events populated)",
+          "insights": "number (0 until usage_events populated)",
+          "usedCredits": "number",
+          "grant": "number|null (null = fair use)",
+          "bonusCredits": "number (balance in excess of the period grant, floor 0)",
+          "fairUse": "boolean",
+          "periodStart": "string"
+        },
+        "AdminBusinessDebtView": {
+          "id": "string",
+          "customer": "string (first name only)",
+          "amountKobo": "number",
+          "remainingKobo": "number",
+          "status": "'open'|'partial'|'overdue'|'paid'|'archived'",
+          "createdAt": "string"
+        }
+      }
+    },
+    {
+      "name": "AdminPlansView",
+      "basedOn": "Plan",
+      "triageClass": "EXTEND",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/plans",
+          "adminRoles": ["superadmin", "support"],
+          "request": {},
+          "response": { "shape": "AdminPlanView[]" },
+          "readsExisting": ["Plan"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["business-detail-need-6"],
+          "designNotes": "Admin-scoped catalog read (GET /plans sits behind the user guard and cross-rejects admin tokens by design). Ladder order fixed: starter, market, business, wholesale, enterprise."
+        }
+      ],
+      "dtos": {
+        "AdminPlanView": {
+          "planId": "string",
+          "label": "string",
+          "monthlyKobo": "number",
+          "ceilingKobo": "number|null",
+          "creditsPerMonth": "number|null (null/-1 = fair use)",
+          "staffSeats": "number",
+          "planOrder": "number"
+        }
+      }
+    },
+    {
+      "name": "AdminDebtsView",
+      "basedOn": "Debt",
+      "triageClass": "EXTEND",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/debts",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20", "search": "string? (business or customer name contains)", "status": "'open'|'partial'|'overdue'|'paid'|'archived'?" } },
+          "response": { "shape": "Paged<AdminDebtView>" },
+          "readsExisting": ["Debt", "Business", "Customer", "Payment", "Reminder"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["debts-need-1"],
+          "designNotes": "Customer identity minimised server-side: first name + masked phone only (fragment privacy note). remindersSent = count of Reminder rows for the debt; daysToRecovery = paidAt-of-settling-payment minus createdAt, null while unpaid. Status vocabulary is the live derived one; the dashboard's filter options map at wiring."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/debts/stats",
+          "adminRoles": ["superadmin", "support"],
+          "request": {},
+          "response": { "shape": "AdminDebtStatsView" },
+          "readsExisting": ["Debt", "Payment"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["debts-need-2"],
+          "designNotes": "Month-relative server-side (current calendar month), never a hardcoded month prefix."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/payments",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20" } },
+          "response": { "shape": "Paged<AdminPaymentView>" },
+          "readsExisting": ["Payment", "Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["debts-need-3"],
+          "designNotes": "method is served VERBATIM as stored ('Paystack link' plus free-text client labels); the dashboard maps/labels client-side rather than the server inventing a vocabulary."
+        }
+      ],
+      "dtos": {
+        "AdminDebtView": {
+          "id": "string",
+          "businessName": "string",
+          "customerFirstName": "string",
+          "customerPhoneMasked": "string",
+          "amountKobo": "number",
+          "remainingKobo": "number",
+          "dueDate": "string|null",
+          "status": "'open'|'partial'|'overdue'|'paid'|'archived'",
+          "remindersSent": "number",
+          "daysToRecovery": "number|null"
+        },
+        "AdminDebtStatsView": {
+          "openRemainingKobo": "number",
+          "recoveredThisMonthKobo": "number",
+          "overdueDebtCount": "number",
+          "avgDaysToRecovery": "number|null"
+        },
+        "AdminPaymentView": {
+          "id": "string",
+          "businessName": "string",
+          "amountKobo": "number",
+          "method": "string (verbatim)",
+          "paidAt": "string"
+        }
+      }
+    },
+    {
+      "name": "AdminRemindersView",
+      "basedOn": "Reminder",
+      "triageClass": "EXTEND",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/reminders/stats",
+          "adminRoles": ["superadmin", "support"],
+          "request": {},
+          "response": { "shape": "AdminReminderStatsView" },
+          "readsExisting": ["Reminder"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["reminders-need-1"],
+          "designNotes": "sendsThisMonth/smsSendsThisMonth from Reminder rows. deliveredThisMonth is null: BulkSMS dispatch is fire-and-forget with no receipts (registry); the card ships HONEST-EMPTY per ruling. smsCostThisMonthKobo = sum of usage_events.costKoboEstimate on type 'send' this month, null when no rows exist yet. creditsPerSend from CREDIT_WEIGHTS (5), served not hardcoded."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/reminders",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20", "channel": "'sms'|'whatsapp'|'call'|'manual'|'printable'?", "status": "'scheduled'|'sent'|'failed'?" } },
+          "response": { "shape": "Paged<AdminReminderView>" },
+          "readsExisting": ["Reminder", "Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["reminders-need-2"],
+          "designNotes": "Status vocabulary is the live scheduled|sent|failed. step is null (schedule steps are derived on the fly, not stored). costKoboEstimate joins usage_events via meta.reminderId once instrumented; null meanwhile."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/reminders/sms-cost-series",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "weeks": "number? default 12" } },
+          "response": { "shape": "AdminSmsCostPointView[]" },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["reminders-need-3"],
+          "designNotes": "Greenlit ORPHAN: weekly avg of usage_events.costKoboEstimate over type 'send' rows that carry a cost. Weeks with no data return costPerSmsAvgKobo null; an entirely empty table returns all-null points, which the sparkline renders as its honest empty state. No provider-billing integration implied."
+        }
+      ],
+      "dtos": {
+        "AdminReminderStatsView": {
+          "sendsThisMonth": "number",
+          "deliveredThisMonth": "number|null (no delivery receipts exist; always null in v1)",
+          "smsSendsThisMonth": "number",
+          "smsCostThisMonthKobo": "number|null",
+          "creditsPerSend": "number",
+          "month": "string (YYYY-MM)"
+        },
+        "AdminReminderView": {
+          "id": "string",
+          "businessName": "string",
+          "channel": "'sms'|'whatsapp'|'call'|'manual'|'printable'",
+          "step": "number|null (not stored; null in v1)",
+          "scheduledFor": "string|null",
+          "sentAt": "string|null",
+          "status": "'scheduled'|'sent'|'failed'",
+          "costKoboEstimate": "number|null"
+        },
+        "AdminSmsCostPointView": {
+          "weekStart": "string (ISO date)",
+          "costPerSmsAvgKobo": "number|null"
+        }
+      }
+    },
+    {
+      "name": "AdminBillingView",
+      "basedOn": "Subscription, BillingTransaction",
+      "triageClass": "EXTEND",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/billing/subscriptions",
+          "adminRoles": ["superadmin"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20", "state": "'none'|'pending'|'active'|'gracePeriod'|'expired'?" } },
+          "response": { "shape": "Paged<AdminSubscriptionView>" },
+          "readsExisting": ["Subscription", "Business", "Plan"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["billing-need-1"],
+          "designNotes": "Superadmin-only per conventions billing matrix. State vocabulary is the LIVE none|pending|active|gracePeriod|expired. source is null: platform is observed only at verify time and never persisted; the source filter renders truthfully disabled until a source field is ever ruled in."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/billing/transactions",
+          "adminRoles": ["superadmin"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20", "search": "string? (business, SKU or kind contains)", "month": "string? YYYY-MM default current" } },
+          "response": { "shape": "Paged<AdminBillingTransactionView>" },
+          "readsExisting": ["BillingTransaction", "Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["billing-need-2"],
+          "designNotes": "grossKobo = recorded amount (0 on webhook-recorded bundle rows, per registry); catalogPriceKobo joins bundle-catalog.ts / Plan.pricePerMonth so the UI can show list price beside the recorded amount. storeFeeKobo/netKobo are null: no store-fee derivation has been ruled (open followUp billing-fee-derivation); columns ship honest-null, never invented percentages."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/billing/stats",
+          "adminRoles": ["superadmin"],
+          "request": {},
+          "response": { "shape": "AdminBillingStatsView" },
+          "readsExisting": ["Subscription", "Plan", "BillingTransaction"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["billing-need-3"],
+          "designNotes": "failedRenewals maps to expired-this-month transitions observable from webhook_event_log iap rows once instrumented; null meanwhile. storeFeeMonthKobo null pending the fee-derivation followUp."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/billing/iap-lifecycle",
+          "adminRoles": ["superadmin"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20" } },
+          "response": { "shape": "AdminIapLifecycleView" },
+          "readsExisting": ["Subscription", "Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["gap-2"],
+          "designNotes": "gap-2 add-to-scope: entitlementStateCounts sweeps Subscription NOW (works day one); the transitions feed reads webhook_event_log source 'iap' (eventType SUBSCRIBED/DID_RENEW/EXPIRED/CANCELLED/DID_FAIL_TO_RENEW/REVOKE/GRACE_PERIOD_EXPIRED, outcome ok|ignored|error) and is empty until the webhook instrumentation lands. Store-driven fail-closed downgrades to starter become visible here."
+        }
+      ],
+      "dtos": {
+        "AdminSubscriptionView": {
+          "businessId": "string",
+          "businessName": "string",
+          "plan": "string (activePlanId)",
+          "priceKobo": "number (Plan.pricePerMonth)",
+          "source": "null (not persisted; honest null in v1)",
+          "currentPeriodEnd": "string|null (renewalAt)",
+          "state": "'none'|'pending'|'active'|'gracePeriod'|'expired'"
+        },
+        "AdminBillingTransactionView": {
+          "id": "string",
+          "at": "string",
+          "businessName": "string",
+          "kind": "'subscription'|'credits-bundle'",
+          "sku": "string (productId)",
+          "grossKobo": "number (recorded amount; may be 0 on webhook rows)",
+          "catalogPriceKobo": "number|null",
+          "storeFeeKobo": "null (pending fee-derivation ruling)",
+          "netKobo": "null (pending fee-derivation ruling)"
+        },
+        "AdminBillingStatsView": {
+          "activeSubscriptionCount": "number",
+          "graceSubscriptionCount": "number",
+          "mrrKobo": "number (flat plan component; band premium display-side)",
+          "storeFeeMonthKobo": "number|null",
+          "failedRenewalsThisMonth": "number|null"
+        },
+        "AdminIapLifecycleView": {
+          "entitlementStateCounts": "{ none: number, pending: number, active: number, gracePeriod: number, expired: number }",
+          "events": "Paged<AdminIapEventView>"
+        },
+        "AdminIapEventView": {
+          "id": "string",
+          "at": "string",
+          "eventType": "string",
+          "businessName": "string|null",
+          "outcome": "'ok'|'ignored'|'error'",
+          "detail": "object|null"
+        }
+      }
+    },
+    {
+      "name": "AdminCreditsView",
+      "basedOn": "CreditLedger, BillingTransaction",
+      "triageClass": "EXTEND",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/credits/stats",
+          "adminRoles": ["superadmin", "support"],
+          "request": {},
+          "response": { "shape": "AdminCreditsStatsView" },
+          "readsExisting": ["CreditLedger", "Plan"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["credits-need-1", "credits-need-2"],
+          "designNotes": "grantedThisMonth sums current-period ledger grants (fair-use -1 excluded). burnedThisMonth from ledger derivation (wires the total even with empty event tables). burnByType from usage_events grouped by type with per-event weights from CREDIT_WEIGHTS; empty array until instrumented (greenlight-via-event-tables ruling), which the 'Burn by type' BarList renders as its honest empty state."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/credits/heavy-users",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..50 default 10", "plan": "'starter'|'market'|'business'|'wholesale'|'enterprise'?" } },
+          "response": { "shape": "Paged<AdminHeavyUserView>" },
+          "readsExisting": ["CreditLedger", "Business", "BillingTransaction"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["credits-need-3"],
+          "designNotes": "Ranked by used (grant + bonus - balance) descending; fairUse = grant -1."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/credits/bundle-purchases",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20", "month": "string? YYYY-MM default current" } },
+          "response": { "shape": "Paged<AdminBundlePurchaseView>" },
+          "readsExisting": ["BillingTransaction", "Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["credits-need-4"],
+          "designNotes": "credits parsed from the oweme_credits_(n) SKU pattern; priceKobo from the bundle-catalog join because webhook-recorded rows carry amount 0 (registry)."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/credits/config",
+          "adminRoles": ["superadmin", "support"],
+          "request": {},
+          "response": { "shape": "AdminCreditsConfigView" },
+          "readsExisting": ["Plan"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["credits-need-5"],
+          "designNotes": "Single source of truth for constants the dashboard must never hardcode: bundle cap (2), CREDIT_WEIGHTS (send 5, voiceParse 1, insightOrRisk 4 - the CODE truth per the maintenance pass), SKU catalog from src/billing/bundle-catalog.ts, per-plan grants from Plan.creditsPerMonth."
+        }
+      ],
+      "dtos": {
+        "AdminCreditsStatsView": {
+          "grantedThisMonth": "number",
+          "burnedThisMonth": "number",
+          "monthLabel": "string (YYYY-MM)",
+          "burnByType": "AdminBurnByTypeView[] (empty until usage_events populated)"
+        },
+        "AdminBurnByTypeView": {
+          "type": "'send'|'voiceParse'|'insight'",
+          "label": "string",
+          "creditsPerEvent": "number",
+          "events": "number",
+          "credits": "number"
+        },
+        "AdminHeavyUserView": {
+          "businessId": "string",
+          "businessName": "string",
+          "plan": "string",
+          "grant": "number|null (null = fair use)",
+          "fairUse": "boolean",
+          "used": "number",
+          "bundlesThisMonth": "number"
+        },
+        "AdminBundlePurchaseView": {
+          "id": "string",
+          "purchasedAt": "string",
+          "businessName": "string",
+          "sku": "string",
+          "credits": "number",
+          "priceKobo": "number|null"
+        },
+        "AdminCreditsConfigView": {
+          "bundleCapPerMonth": "number",
+          "creditWeights": "{ send: number, voiceParse: number, insightOrRisk: number }",
+          "bundles": "{ sku: string, credits: number, priceKobo: number }[]",
+          "planGrants": "{ planId: string, creditsPerMonth: number|null }[]",
+          "fairUseNote": "string (enterprise fair-use policy copy)"
+        }
+      }
+    },
+    {
+      "name": "AdminPayLinksView",
+      "basedOn": "Payment",
+      "triageClass": "EXTEND",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/pay-links/payments",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20", "month": "string? YYYY-MM default current" } },
+          "response": { "shape": "Paged<AdminPayLinkPaymentView>" },
+          "readsExisting": ["Payment", "Business", "Debt", "Customer"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["pay-links-need-1"],
+          "designNotes": "Rows are Payment method 'Paystack link'. Fee split (combined fee, OweMe commission, processor share) computed SERVER-side from the live pay-link-fees.ts formulas at read time (never persisted, never client-computed). status is 'success' for every row: the webhook records successes only (registry); no pending/failed rows exist to show, stated in the DTO."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/pay-links/stats",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "month": "string? YYYY-MM default current" } },
+          "response": { "shape": "AdminPayLinkStatsView" },
+          "readsExisting": ["Payment"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["pay-links-need-2"],
+          "designNotes": "Month parameterised server aggregate, never a hardcoded month prefix."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/webhooks/events",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20", "source": "'paystack'|'iap'?", "outcome": "'ok'|'ignored'|'error'?" } },
+          "response": { "shape": "Paged<AdminWebhookEventView> + errorCount: number (unfiltered errors, for the section subtitle)" },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["pay-links-need-3"],
+          "designNotes": "Reads webhook_event_log; empty (data: [], total: 0, errorCount: 0) until the webhook instrumentation lands, which the table renders as its honest empty state."
+        }
+      ],
+      "dtos": {
+        "AdminPayLinkPaymentView": {
+          "id": "string",
+          "at": "string",
+          "businessName": "string",
+          "debtorFirstName": "string",
+          "amountKobo": "number",
+          "combinedFeeKobo": "number (derived, formula-authoritative)",
+          "commissionKobo": "number (derived)",
+          "processorShareKobo": "number (derived)",
+          "status": "'success' (only successful charges are recorded)"
+        },
+        "AdminPayLinkStatsView": {
+          "settledCount": "number",
+          "volumeKobo": "number",
+          "feesChargedKobo": "number",
+          "commissionKeptKobo": "number",
+          "month": "string (YYYY-MM)"
+        },
+        "AdminWebhookEventView": {
+          "id": "string",
+          "at": "string",
+          "source": "'paystack'|'iap'",
+          "eventType": "string",
+          "reference": "string|null",
+          "outcome": "'ok'|'ignored'|'error'",
+          "detail": "object|null"
+        }
+      }
+    },
+    {
+      "name": "AdminPayoutsView",
+      "basedOn": "PayoutAccount",
+      "triageClass": "EXTEND",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/payouts/accounts",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20", "search": "string? (business, bank or account name contains)" } },
+          "response": { "shape": "Paged<AdminPayoutAccountView>" },
+          "readsExisting": ["PayoutAccount", "Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["payouts-need-1"],
+          "designNotes": "NUBAN masked SERVER-side (****+last 4) fixing the fragment's client-side-masking defect. bankName resolved from bankCode via the same bank list the live GET /banks serves. subaccountActive = Business.paystackSubaccount != null. Settlement fields are null per the partial-honest-empty ruling (settlement is provider-side; no source exists)."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/payouts/stats",
+          "adminRoles": ["superadmin", "support"],
+          "request": {},
+          "response": { "shape": "AdminPayoutStatsView" },
+          "readsExisting": ["PayoutAccount", "Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["payouts-need-2"],
+          "designNotes": "partial-honest-empty ruling: payoutAccountsSetUpCount and activeSubaccountCount wire from real rows; settlement figures and failed-resolution counts are null (resolve failures return 422 and are never stored) and their stat cards ship HONEST-EMPTY until a settlement feed exists."
+        }
+      ],
+      "dtos": {
+        "AdminPayoutAccountView": {
+          "businessId": "string",
+          "businessName": "string",
+          "bankName": "string",
+          "nubanMasked": "string",
+          "accountName": "string",
+          "subaccountActive": "boolean",
+          "settledMonthKobo": "null (no settlement source in v1)",
+          "settledTotalKobo": "null",
+          "pendingSettlements": "null",
+          "lastSettlementAt": "null"
+        },
+        "AdminPayoutStatsView": {
+          "payoutAccountsSetUpCount": "number",
+          "activeSubaccountCount": "number",
+          "settledToTradersMonthKobo": "number|null (null in v1)",
+          "pendingSettlementsTotal": "number|null (null in v1)",
+          "failedAccountResolutionCount": "number|null (null in v1; 422 resolve failures are not persisted)"
+        }
+      }
+    },
+    {
+      "name": "AdminAuthMonitorView",
+      "basedOn": "OtpRequestLog (new), RefreshToken, OtpCode",
+      "triageClass": "NEW",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/auth-monitor/stats",
+          "adminRoles": ["superadmin", "support"],
+          "request": {},
+          "response": { "shape": "AdminOtpStatsView" },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["auth-monitor-need-1"],
+          "designNotes": "Reads otp_request_log (greenlight-via-event-tables ruling). deliverySuccessPct is null while all delivery outcomes are 'delivered-unknown' (BulkSMS reports nothing back); displayed honestly per ruling. Zeros/null from the empty table until instrumentation lands."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/auth-monitor/series",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "days": "number? default 14" } },
+          "response": { "shape": "AdminOtpSeriesView" },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["auth-monitor-need-2"],
+          "designNotes": "Daily request counts from otp_request_log; unlike OtpCode, log rows survive verify-time hard deletes, so the series does not undercount."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/auth-monitor/requests",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20", "phoneDigits": "string? (search within masked digits)", "outcome": "'requested'|'delivered-unknown'|'verified'|'failed'|'rate-limited'?" } },
+          "response": { "shape": "Paged<AdminOtpRequestView>" },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["auth-monitor-need-3"],
+          "designNotes": "Phones stored and served MASKED (otp_request_log.phoneMasked); full numbers never enter the log."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/auth-monitor/test-numbers",
+          "adminRoles": ["superadmin"],
+          "request": {},
+          "response": { "shape": "AdminTestNumberView[]" },
+          "readsExisting": ["Business", "OtpCode"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["auth-monitor-need-4"],
+          "designNotes": "Server-side filter isTest = true is structural (conventions power 2). Lists phone + current-code expiry state ONLY; codes are NEVER bulk-shipped with the list (surf-6 note) - reveal is the separate audited AdminOtpReveal action."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/auth-monitor/sessions",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20" } },
+          "response": { "shape": "AdminSessionSecurityView" },
+          "readsExisting": ["RefreshToken", "Staff", "Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["gap-1"],
+          "designNotes": "gap-1 add-to-scope: read-only aggregation over RefreshToken rows (live sessions, revocations, rotation chains via rotatedFrom). Reuse-vs-logout revocation reason is NOT stored today: reasoned counts are null until the optional RefreshToken.revokedReason instrumentation lands; raw revocation counts and the recent-revocations feed work day one."
+        }
+      ],
+      "dtos": {
+        "AdminOtpStatsView": {
+          "otpRequestsToday": "number",
+          "deliverySuccessPct": "number|null (null while provider reports no receipts)",
+          "failedVerificationsToday": "number",
+          "rateLimitBlocksToday": "number"
+        },
+        "AdminOtpSeriesView": {
+          "startDate": "string (ISO date)",
+          "endDate": "string (ISO date)",
+          "counts": "number[] (one per day, oldest first)"
+        },
+        "AdminOtpRequestView": {
+          "id": "string",
+          "requestedAt": "string",
+          "phoneMasked": "string",
+          "outcome": "'requested'|'delivered-unknown'|'verified'|'failed'|'rate-limited'",
+          "attempts": "number",
+          "rateLimited": "boolean (derived: outcome = rate-limited)"
+        },
+        "AdminTestNumberView": {
+          "businessId": "string",
+          "businessName": "string",
+          "phone": "string (full; test-flagged businesses only, superadmin only)",
+          "hasActiveCode": "boolean",
+          "expiresAt": "string|null"
+        },
+        "AdminSessionSecurityView": {
+          "activeSessionCount": "number",
+          "revokedLast7d": "number",
+          "reuseIncidentsLast7d": "number|null (null until revokedReason instrumentation)",
+          "logoutRevocationsLast7d": "number|null (null until revokedReason instrumentation)",
+          "recentRevocations": "Paged<AdminRevocationView>"
+        },
+        "AdminRevocationView": {
+          "staffId": "string",
+          "businessName": "string|null",
+          "revokedAt": "string",
+          "expiresAt": "string",
+          "chainDepth": "number (rotations in the rotatedFrom chain)",
+          "reason": "string|null (null until instrumented)"
+        }
+      }
+    },
+    {
+      "name": "AdminAiUsageView",
+      "basedOn": "UsageEvent (new)",
+      "triageClass": "NEW",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/ai-usage/stats",
+          "adminRoles": ["superadmin", "support"],
+          "request": {},
+          "response": { "shape": "AdminAiStatsView" },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["ai-usage-need-1"],
+          "designNotes": "Reads usage_events type 'voiceParse' (greenlight-via-event-tables). Backend only ever sees FALLBACK parses; on-device parses never reach the server (client heuristic), so onDeviceParses/onDeviceSharePct are null unless the app ever reports them (app-side change, flagged as followUp, out of admin scope). modelSpendEstimateKobo sums costKoboEstimate when recorded, else null. Zeros/null from the empty table."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/ai-usage/series",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "weeks": "number? default 12" } },
+          "response": { "shape": "AdminAiWeekPointView[]" },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["ai-usage-need-2"],
+          "designNotes": "Weekly counts of usage_events type 'voiceParse'; all-zero points from the empty table."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/ai-usage/by-business",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..50 default 10", "plan": "'starter'|'market'|'business'|'wholesale'|'enterprise'?" } },
+          "response": { "shape": "Paged<AdminAiBusinessView>" },
+          "readsExisting": ["Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["ai-usage-need-3"],
+          "designNotes": "Monthly rollup of usage_events grouped by businessId (types voiceParse + insight). insight counts stay 0 while the insights endpoints remain 501 scaffolds."
+        },
+        {
+          "method": "GET",
+          "path": "/admin/ai-usage/recent-parses",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..50 default 10" } },
+          "response": { "shape": "Paged<AdminAiParseEventView>" },
+          "readsExisting": ["Business"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["ai-usage-need-4"],
+          "designNotes": "METADATA-ONLY per final ruling: time, business, outcome, credits. Transcripts are NEVER stored anywhere and NEVER appear in usage_events.meta for voiceParse rows; the instrumentation entry for voice.service must record outcome metadata only. The dashboard transcript column is removed at wiring."
+        }
+      ],
+      "dtos": {
+        "AdminAiStatsView": {
+          "parsesTotal": "number (fallback parses reaching the server)",
+          "fallbackParses": "number",
+          "onDeviceParses": "number|null (unknowable server-side in v1)",
+          "onDeviceSharePct": "number|null",
+          "modelSpendEstimateKobo": "number|null",
+          "periodMonth": "string (YYYY-MM)"
+        },
+        "AdminAiWeekPointView": { "weekStart": "string (ISO date)", "parses": "number" },
+        "AdminAiBusinessView": {
+          "businessId": "string",
+          "businessName": "string",
+          "plan": "string",
+          "parses": "number",
+          "onDevicePct": "number|null (null in v1)",
+          "insights": "number",
+          "creditsDebited": "number"
+        },
+        "AdminAiParseEventView": {
+          "id": "string",
+          "at": "string",
+          "businessId": "string",
+          "businessName": "string",
+          "outcome": "string (from meta, e.g. parsed|low-confidence|error)",
+          "creditsCharged": "number"
+        }
+      }
+    },
+    {
+      "name": "AdminSyncHealthView",
+      "basedOn": "Customer, Debt",
+      "triageClass": "NEW",
+      "wave": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/sync-health",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "query": { "page": "number? default 1", "limit": "number? 1..100 default 20" } },
+          "response": { "shape": "AdminSyncHealthView" },
+          "readsExisting": ["Customer", "Debt", "Business", "Payment"],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["gap-4"],
+          "designNotes": "gap-4 add-to-scope: tombstone coverage (Customer.deleted, Debt.deleted counts), newest updatedAt per business as a sync-recency proxy (no per-device cursor is stored server-side; stated in the DTO), and the registry-documented Payment limitation surfaced verbatim for support: POST /debts/:id/undo-payment hard-deletes the Payment with NO tombstone, silently desyncing offline devices. Read-only; fixing the limitation is protected-surface work, out of admin scope."
+        }
+      ],
+      "dtos": {
+        "AdminSyncHealthView": {
+          "totals": "{ customerTombstones: number, debtTombstones: number, archivedDebts: number }",
+          "knownLimitations": "string[] (includes the payment hard-delete/no-tombstone limitation)",
+          "perBusiness": "Paged<AdminSyncBusinessView>"
+        },
+        "AdminSyncBusinessView": {
+          "businessId": "string",
+          "businessName": "string",
+          "customerTombstones": "number",
+          "debtTombstones": "number",
+          "newestWriteAt": "string|null (max updatedAt across synced entities)"
+        }
+      }
+    },
+    {
+      "name": "AdminUserManagement",
+      "basedOn": "AdminUser (new)",
+      "triageClass": "NEW",
+      "wave": 3,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/admin/admin-users",
+          "adminRoles": ["superadmin"],
+          "request": {},
+          "response": { "shape": "AdminUserView[]" },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": [],
+          "auditLogged": false,
+          "needIds": ["admins-need-1"],
+          "designNotes": "The dashboard's 'invited' status maps to status active + mustChangePassword true + lastLoginAt null (pendingFirstLogin in the DTO) per the replace-invite-with-create ruling."
+        },
+        {
+          "method": "POST",
+          "path": "/admin/admin-users",
+          "adminRoles": ["superadmin"],
+          "request": { "body": { "email": "string (required, unique)", "name": "string (required)", "role": "'superadmin'|'support' (required)" } },
+          "response": { "shape": "AdminUserCreatedView", "errors": ["422 VALIDATION_ERROR (duplicate email, bad format)"] },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": ["admin_users", "admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["admins-need-3"],
+          "designNotes": "replace-invite-with-create ruling: server generates a temp password, returns it ONCE in this response (never retrievable again), sets mustChangePassword=true. No email is sent; no email provider exists or is wanted. Invite-email copy on the screen is CUT/replaced at wiring."
+        },
+        {
+          "method": "POST",
+          "path": "/admin/admin-users/:id/disable",
+          "adminRoles": ["superadmin"],
+          "request": { "params": { "id": "string" } },
+          "response": { "shape": "AdminUserView", "errors": ["404 NOT_FOUND", "422 VALIDATION_ERROR (self-disable refused server-side)"] },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": ["admin_users", "admin_refresh_tokens", "admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["admins-need-4"],
+          "designNotes": "Also revokes all live admin refresh tokens for the target."
+        },
+        {
+          "method": "POST",
+          "path": "/admin/admin-users/:id/enable",
+          "adminRoles": ["superadmin"],
+          "request": { "params": { "id": "string" } },
+          "response": { "shape": "AdminUserView", "errors": ["404 NOT_FOUND"] },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": ["admin_users", "admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["admins-need-5"]
+        },
+        {
+          "method": "DELETE",
+          "path": "/admin/admin-users/:id",
+          "adminRoles": ["superadmin"],
+          "request": { "params": { "id": "string" } },
+          "response": { "shape": "{ ok: true }", "errors": ["404 NOT_FOUND", "422 VALIDATION_ERROR (target has logged in at least once; disable instead)"] },
+          "readsExisting": [],
+          "writesExisting": [],
+          "newTables": ["admin_users", "admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["admins-need-6"],
+          "designNotes": "Revoke-invite analog: hard delete permitted ONLY for never-activated accounts (lastLoginAt null); activated accounts must be disabled, preserving audit-log actor referential integrity. Audit row records the removed email."
+        }
+      ],
+      "dtos": {
+        "AdminUserView": {
+          "id": "string",
+          "name": "string",
+          "email": "string",
+          "role": "'superadmin'|'support'",
+          "status": "'active'|'disabled'",
+          "pendingFirstLogin": "boolean (mustChangePassword && lastLoginAt null; renders as the screen's 'invited' state)",
+          "lastActiveAt": "string|null"
+        },
+        "AdminUserCreatedView": {
+          "admin": "AdminUserView",
+          "tempPassword": "string (shown once, never retrievable)"
+        }
+      }
+    },
+    {
+      "name": "AdminBusinessActions",
+      "basedOn": "Business",
+      "triageClass": "EXTEND",
+      "wave": 3,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/admin/businesses/:id/test-flag",
+          "adminRoles": ["superadmin"],
+          "request": { "params": { "id": "string" }, "body": { "isTest": "boolean (required)" } },
+          "response": { "shape": "AdminBusinessDetailView", "errors": ["404 NOT_FOUND"] },
+          "readsExisting": ["Business"],
+          "writesExisting": ["Business.isTest (additive column)"],
+          "newTables": ["admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["business-detail-need-7"]
+        },
+        {
+          "method": "POST",
+          "path": "/admin/businesses/:id/grant-credits",
+          "adminRoles": ["superadmin"],
+          "request": { "params": { "id": "string" }, "body": { "credits": "number (required, integer >= 1)" } },
+          "response": { "shape": "AdminCreditUsageView", "errors": ["404 NOT_FOUND", "422 VALIDATION_ERROR"] },
+          "readsExisting": ["Business"],
+          "writesExisting": ["CreditLedger.balance (increment via the existing creditCredits semantics; DECLARED EXCEPTION, see writesExistingExceptions)"],
+          "newTables": ["admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["business-detail-need-8"],
+          "designNotes": "Conventions power 3. Must go through the registry-mandated creditCredits increment path to preserve carry-over semantics; never sets balance absolutely."
+        },
+        {
+          "method": "POST",
+          "path": "/admin/businesses/:id/force-plan",
+          "adminRoles": ["superadmin"],
+          "request": { "params": { "id": "string" }, "body": { "plan": "'starter'|'market'|'business'|'wholesale'|'enterprise' (required)" } },
+          "response": { "shape": "AdminBusinessDetailView", "errors": ["404 NOT_FOUND", "422 VALIDATION_ERROR (unknown plan)"] },
+          "readsExisting": ["Business", "Plan"],
+          "writesExisting": ["Business.plan (sanctioned)", "Subscription.activePlanId/entitlementState (lockstep update mandated by registry sideEffects warning; DECLARED EXCEPTION)"],
+          "newTables": ["admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["business-detail-need-9"],
+          "designNotes": "Sales provisioning path (conventions power 3, allowed on non-test businesses). Registry warns out-of-band plan edits diverge Business.plan from Subscription: this endpoint keeps both in lockstep. Holds until next renewal; store-driven webhook lifecycle can later overwrite it, stated in the audit note."
+        },
+        {
+          "method": "POST",
+          "path": "/admin/businesses/:id/enterprise-bands",
+          "adminRoles": ["superadmin"],
+          "request": { "params": { "id": "string" }, "body": { "extraBands": "number (required, integer >= 0)" } },
+          "response": { "shape": "AdminBusinessDetailView", "errors": ["404 NOT_FOUND", "422 VALIDATION_ERROR (non-enterprise plan or negative)"] },
+          "readsExisting": ["Business", "Plan"],
+          "writesExisting": ["Business.enterpriseBands (additive column)", "Business.bvumCeilingOverride (derived ceiling written alongside, per task ruling)"],
+          "newTables": ["admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["business-detail-need-10"],
+          "designNotes": "bvumCeilingOverride = enterprise base ceiling + extraBands x band ceiling increment (N40M base + N20M per band per the businesses fragment). Price math (25000 + 12500 x bands) is display-side only; no price is persisted."
+        },
+        {
+          "method": "POST",
+          "path": "/admin/businesses/:id/reset-test",
+          "adminRoles": ["superadmin"],
+          "request": { "params": { "id": "string" }, "body": { "confirm": "string (required, must equal the business name)" } },
+          "response": { "shape": "{ ok: true, cleared: { debts: number, payments: number, reminders: number } }", "errors": ["404 NOT_FOUND", "403 FORBIDDEN (business is NOT test-flagged; refusal is server-side and structural)", "422 VALIDATION_ERROR (confirm mismatch)"] },
+          "readsExisting": ["Business"],
+          "writesExisting": ["Debt/Payment/Reminder rows of the TEST business (hard wipe permitted ONLY behind isTest; DECLARED EXCEPTION)", "CreditLedger (reset to plan grant, bonus removed; DECLARED EXCEPTION)"],
+          "newTables": ["admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["business-detail-need-11"],
+          "designNotes": "Conventions power 4. The isTest check happens inside the same transaction as the wipe. Contradicts app soft-delete rules by explicit owner approval, test-flagged rows only."
+        },
+        {
+          "method": "POST",
+          "path": "/admin/businesses/:id/suspend",
+          "adminRoles": ["superadmin"],
+          "request": { "params": { "id": "string" }, "body": { "note": "string?" } },
+          "response": { "shape": "AdminBusinessDetailView", "errors": ["404 NOT_FOUND", "422 VALIDATION_ERROR (already suspended)"] },
+          "readsExisting": ["Business"],
+          "writesExisting": ["Business.suspendedAt (additive column)"],
+          "newTables": ["admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["gap-5"],
+          "designNotes": "gap-5 add-to-scope. Sets suspendedAt=now. The APP-SIDE ENFORCEMENT (blocking new debt creation for suspended businesses; collection never blocked, mirroring BVUM philosophy) is a PROTECTED-surface change to src/debts/debts.service.ts and is OUT of admin scope: recorded as followUp 'suspension-enforcement' for the owner. Until that lands, suspension is a recorded state the dashboard reflects."
+        },
+        {
+          "method": "POST",
+          "path": "/admin/businesses/:id/unsuspend",
+          "adminRoles": ["superadmin"],
+          "request": { "params": { "id": "string" } },
+          "response": { "shape": "AdminBusinessDetailView", "errors": ["404 NOT_FOUND", "422 VALIDATION_ERROR (not suspended)"] },
+          "readsExisting": ["Business"],
+          "writesExisting": ["Business.suspendedAt (additive column, set null)"],
+          "newTables": ["admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["gap-5"],
+          "designNotes": "Second endpoint of the gap-5 suspension lifecycle (same gap id, same resource)."
+        }
+      ],
+      "dtos": {}
+    },
+    {
+      "name": "AdminReminderActions",
+      "basedOn": "Reminder",
+      "triageClass": "EXTEND",
+      "wave": 3,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/admin/reminders/:id/retry",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "params": { "id": "string" } },
+          "response": { "shape": "AdminReminderView", "errors": ["404 NOT_FOUND", "422 VALIDATION_ERROR (row not 'failed', or whatsapp: no server WhatsApp API)", "403 PLAN_REQUIRED (target business credits exhausted; row stays failed)"] },
+          "readsExisting": ["Reminder", "Business"],
+          "writesExisting": ["Reminder.status/sentAt (via the existing retry semantics, cross-tenant; DECLARED EXCEPTION)", "CreditLedger (5-credit re-debit of the TARGET business, existing debit semantics; DECLARED EXCEPTION)"],
+          "newTables": ["admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["reminders-need-4"],
+          "designNotes": "Conventions-approved support action. Reuses the live retry semantics read-only-imported from RemindersService (sms only; re-debits 5 trader credits and dispatches a REAL SMS - the audit row records both side effects). Wiring must surface the re-debit consequence in the confirm UI."
+        }
+      ],
+      "dtos": {}
+    },
+    {
+      "name": "AdminWebhookActions",
+      "basedOn": "WebhookEventLog (new)",
+      "triageClass": "NEW",
+      "wave": 3,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/admin/webhooks/events/:id/replay",
+          "adminRoles": ["superadmin", "support"],
+          "request": { "params": { "id": "string" } },
+          "response": { "shape": "AdminWebhookEventView (the new outcome row appended by the replay)", "errors": ["404 NOT_FOUND", "422 VALIDATION_ERROR (event outcome is not 'error')"] },
+          "readsExisting": [],
+          "writesExisting": ["Via the existing WebhooksService processing of the stored payload (Payment/Notification/Subscription writes exactly as a live delivery, idempotent on reference; DECLARED EXCEPTION)"],
+          "newTables": ["webhook_event_log", "admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["pay-links-need-4"],
+          "designNotes": "Conventions-approved support action. Requires webhook_event_log.detail to retain the verified payload for error-outcome rows (instrumentation entry does this). Replay re-invokes the same processing path a live delivery uses (signature already verified at capture time), appends a fresh log row with the new outcome, and audit-logs the actor. Error rows only."
+        }
+      ],
+      "dtos": {}
+    },
+    {
+      "name": "AdminOtpReveal",
+      "basedOn": "OtpTestCode (new)",
+      "triageClass": "NEW",
+      "wave": 3,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/admin/auth-monitor/test-numbers/:businessId/reveal",
+          "adminRoles": ["superadmin"],
+          "request": { "params": { "businessId": "string" } },
+          "response": { "shape": "AdminOtpRevealView", "errors": ["404 NOT_FOUND (no business, business not test-flagged, or no active code - indistinguishable by design)"] },
+          "readsExisting": ["Business"],
+          "writesExisting": [],
+          "newTables": ["admin_audit_log"],
+          "auditLogged": true,
+          "needIds": ["auth-monitor-need-5"],
+          "designNotes": "Conventions power 2. OtpCode stores only codeHash (registry ADMIN RISK); real users' hashing is NEVER weakened. Reveal reads the otp_test_codes SIDE TABLE, populated ONLY at issuance time and ONLY when the phone resolves to an isTest business (instrumentation entry in auth.service). The reveal query joins Business.isTest=true server-side, so a real user's code is structurally unreachable even if a stray side-table row existed. POST (not GET) because every reveal writes an audit row ('reveal-otp')."
+        }
+      ],
+      "dtos": {
+        "AdminOtpRevealView": {
+          "code": "string (6 digits)",
+          "expiresInSeconds": "number"
+        }
+      }
+    }
+  ],
+  "newTables": [
+    {
+      "table": "admin_users",
+      "prismaModel": "AdminUser",
+      "columns": "id String @id (UUIDv7, server-minted), email String @unique, name String, passwordHash String (hash per codebase crypto convention, src/auth/auth.crypto.ts idiom), role String ('superadmin'|'support'), status String ('active'|'disabled'), mustChangePassword Boolean @default(true), lastLoginAt DateTime?, lastActiveAt DateTime?, createdAt DateTime @default(now()), updatedAt DateTime @updatedAt",
+      "purpose": "Separate admin identity (skill law 5); never touches user Staff/OtpCode/RefreshToken machinery.",
+      "writtenBy": "AdminAuth (login stamps lastLoginAt/lastActiveAt, change-password), AdminUserManagement (create/disable/enable/delete), seed command"
+    },
+    {
+      "table": "admin_refresh_tokens",
+      "prismaModel": "AdminRefreshToken",
+      "columns": "id String @id, adminUserId String, tokenHash String @unique, rotatedFrom String?, revokedAt DateTime?, expiresAt DateTime, createdAt DateTime @default(now())",
+      "purpose": "Admin session rotation + reuse detection, mirroring the live RefreshToken idiom on a fully separate table/secret.",
+      "writtenBy": "AdminAuth (login/refresh), AdminUserManagement (disable revokes)"
+    },
+    {
+      "table": "admin_audit_log",
+      "prismaModel": "AdminAuditLog",
+      "columns": "id String @id, adminUserId String, adminNameSnapshot String, adminRoleSnapshot String, actionType String, action String, targetType String?, targetId String?, targetBusinessId String?, before Json?, after Json?, note String?, createdAt DateTime @default(now())",
+      "purpose": "Owner-approved append-only audit store; written by EVERY admin write endpoint; no update/delete path exists anywhere.",
+      "writtenBy": "audit hook invoked by all auditLogged:true endpoints"
+    },
+    {
+      "table": "usage_events",
+      "prismaModel": "UsageEvent",
+      "columns": "id String @id, businessId String, type String ('send'|'voiceParse'|'insight'), credits Int, costKoboEstimate Int?, meta Json?, createdAt DateTime @default(now()) — index (businessId, createdAt), (type, createdAt)",
+      "purpose": "Append-only per-debit event log (greenlight-via-event-tables ruling): powers per-type burn, AI stats, send stats, SMS cost estimates (costKoboEstimate per rulings.orphans reminders-need-3).",
+      "writtenBy": "PROTECTED-path instrumentation ONLY (see instrumentation[]; later fenced task). Admin endpoints read gracefully from empty."
+    },
+    {
+      "table": "otp_request_log",
+      "prismaModel": "OtpRequestLog",
+      "columns": "id String @id, phoneMasked String, businessId String?, outcome String ('requested'|'delivered-unknown'|'verified'|'failed'|'rate-limited'), attempts Int @default(0), createdAt DateTime @default(now()) — index (createdAt), (outcome, createdAt)",
+      "purpose": "Persistent OTP request/outcome log (ruling): survives OtpCode's delete-on-verify, records throttle blocks, stores phones MASKED only. Delivery recorded as far as the provider reports; otherwise 'delivered-unknown', displayed honestly.",
+      "writtenBy": "PROTECTED-path instrumentation ONLY (auth.service request/verify paths)."
+    },
+    {
+      "table": "otp_test_codes",
+      "prismaModel": "OtpTestCode",
+      "columns": "phone String @id, codePlain String, expiresAt DateTime, createdAt DateTime @default(now())",
+      "purpose": "Plaintext OTP side-table for TEST-FLAGGED businesses ONLY, per conventions power 2 and the task ruling: populated solely at issuance when the phone maps to Business.isTest=true; real users' hashed-at-rest OtpCode semantics untouched. Rows deleted alongside the consume/deleteMany at verify.",
+      "writtenBy": "PROTECTED-path instrumentation ONLY (auth.service issuance + consume). Read by AdminOtpReveal with a server-side isTest join."
+    },
+    {
+      "table": "webhook_event_log",
+      "prismaModel": "WebhookEventLog",
+      "columns": "id String @id, source String ('paystack'|'iap'), eventType String, reference String?, outcome String ('ok'|'ignored'|'error'), detail Json? (verified payload retained for error rows to enable replay), createdAt DateTime @default(now()) — index (source, createdAt), (outcome, createdAt)",
+      "purpose": "Persisted webhook event store (ruling): powers the pay-links webhook table, error counter, replay action and the gap-2 IAP lifecycle panel.",
+      "writtenBy": "PROTECTED-path instrumentation (webhooks.service paystack + iap handlers) AND AdminWebhookActions replay (appends the replay outcome row)."
+    }
+  ],
+  "newColumns": [
+    { "table": "Business", "column": "isTest Boolean @default(false)", "purpose": "Test-account flag (conventions power 1); server-side structural filter for every test-only power.", "writtenBy": "POST /admin/businesses/:id/test-flag" },
+    { "table": "Business", "column": "enterpriseBands Int @default(0)", "purpose": "Additive band count for rev 2 enterprise banding; price math (25000 + 12500 x bands) stays display-side.", "writtenBy": "POST /admin/businesses/:id/enterprise-bands (which also writes the derived bvumCeilingOverride)" },
+    { "table": "Business", "column": "suspendedAt DateTime?", "purpose": "gap-5 suspension lifecycle state; enforcement in debts.service is a flagged followUp, not admin scope.", "writtenBy": "POST /admin/businesses/:id/suspend | /unsuspend" },
+    { "table": "RefreshToken", "column": "revokedReason String? (OPTIONAL, additive nullable)", "purpose": "Lets the gap-1 session panel distinguish reuse-detection revocations from logout revocations; panel works without it (reasoned counts null).", "writtenBy": "NOT written by any admin endpoint; future protected-path instrumentation only (auth.service refresh()/logout())" }
+  ],
+  "instrumentation": [
+    {
+      "id": "instr-1",
+      "table": "usage_events",
+      "type": "send",
+      "targetFile": "src/reminders/reminders.service.ts",
+      "targetPath": "create() metered immediate-send branch (registry evidence lines 100-158, after the 5-credit debit + successful dispatch)",
+      "writes": "{ businessId, type:'send', credits:5, costKoboEstimate: provider estimate when available else null, meta:{ reminderId, channel } }"
+    },
+    {
+      "id": "instr-2",
+      "table": "usage_events",
+      "type": "send",
+      "targetFile": "src/reminders/reminder-dispatch.service.ts",
+      "targetPath": "cron delivery success path (touchDebt vicinity), one write per successful scheduled dispatch",
+      "writes": "{ businessId, type:'send', credits:5, costKoboEstimate, meta:{ reminderId, channel, scheduled:true } }"
+    },
+    {
+      "id": "instr-3",
+      "table": "usage_events",
+      "type": "send",
+      "targetFile": "src/reminders/reminders.service.ts",
+      "targetPath": "retry() re-debit path (registry evidence lines 165-192)",
+      "writes": "{ businessId, type:'send', credits:5, costKoboEstimate, meta:{ reminderId, retry:true } }"
+    },
+    {
+      "id": "instr-4",
+      "table": "usage_events",
+      "type": "voiceParse",
+      "targetFile": "src/voice/voice.service.ts",
+      "targetPath": "success-only debit point (debit 1 credit on success, per registry)",
+      "writes": "{ businessId, type:'voiceParse', credits:1, costKoboEstimate: LLM cost estimate when computable else null, meta:{ outcome } } — meta MUST NOT contain the transcript (metadata-only ruling)"
+    },
+    {
+      "id": "instr-5",
+      "table": "usage_events",
+      "type": "insight",
+      "targetFile": "src/insights/ + src/customers/customers.controller.ts:76-81 (GET /customers/:id/risk)",
+      "targetPath": "future: when the 501 scaffolds go live, at their CREDIT_WEIGHTS.insightOrRisk=4 debit point",
+      "writes": "{ businessId, type:'insight', credits:4, meta:{ kind } } — no-op today; recorded so the unscaffolding task inherits the obligation"
+    },
+    {
+      "id": "instr-6",
+      "table": "otp_request_log",
+      "targetFile": "src/auth/auth.service.ts",
+      "targetPath": "requestOtp (registry evidence lines 45-59): one row per request with outcome 'requested' (or 'rate-limited' when the silent 30/phone/min or 120/ip/min throttle swallows it)",
+      "writes": "{ phoneMasked, businessId: resolved when the phone maps to an existing business else null, outcome, attempts:0 }"
+    },
+    {
+      "id": "instr-7",
+      "table": "otp_request_log",
+      "targetFile": "src/auth/auth.service.ts",
+      "targetPath": "verifyOtp (registry evidence lines 62-92): outcome 'verified' on success, 'failed' on wrong/expired code, with the attempt count",
+      "writes": "{ phoneMasked, businessId, outcome:'verified'|'failed', attempts }"
+    },
+    {
+      "id": "instr-8",
+      "table": "otp_test_codes",
+      "targetFile": "src/auth/auth.service.ts",
+      "targetPath": "code issuance inside requestOtp (lines 45-59): upsert plaintext code ONLY when the phone resolves to a Business with isTest=true; plus delete alongside the deleteMany({phone}) consume at line 87",
+      "writes": "{ phone, codePlain, expiresAt } — structurally never written for non-test businesses"
+    },
+    {
+      "id": "instr-9",
+      "table": "webhook_event_log",
+      "targetFile": "src/webhooks/webhooks.service.ts",
+      "targetPath": "paystack handler (registry evidence lines 102-190): one row per verified delivery with eventType, data.reference, outcome ok|ignored|error (error rows retain the verified payload in detail for replay)",
+      "writes": "{ source:'paystack', eventType, reference, outcome, detail }"
+    },
+    {
+      "id": "instr-10",
+      "table": "webhook_event_log",
+      "targetFile": "src/webhooks/webhooks.service.ts",
+      "targetPath": "iap handler (registry evidence lines 200-277): one row per delivery with notificationType, outcome ok|ignored (no tenant binding)|error",
+      "writes": "{ source:'iap', eventType: notificationType, reference: store transaction id, outcome, detail }"
+    },
+    {
+      "id": "instr-11",
+      "table": "RefreshToken.revokedReason (optional column)",
+      "targetFile": "src/auth/auth.service.ts",
+      "targetPath": "refresh() reuse-detection chain revoke ('reuse'), rotation revoke ('rotation'), logout() ('logout')",
+      "writes": "one-word reason string on the existing revoke updates — OPTIONAL fidelity upgrade for gap-1; the sessions panel functions without it"
+    }
+  ],
+  "followUps": [
+    {
+      "id": "followup-suspension-enforcement",
+      "flagged": true,
+      "owner": "Excel",
+      "summary": "gap-5 app-side effect: blocking NEW debt creation for suspended businesses (collection never blocked) requires a check in src/debts/debts.service.ts POST /debts path - PROTECTED surface, explicitly OUT of admin scope. Until owner authorizes that fenced maintenance edit, Business.suspendedAt is recorded state only."
+    },
+    {
+      "id": "followup-billing-fee-derivation",
+      "flagged": true,
+      "owner": "Excel",
+      "summary": "billing-need-2 store-fee/net breakdown has no ruled derivation (webhook bundle rows record amount 0). AdminBillingTransactionView ships storeFeeKobo/netKobo as honest null until the owner rules a derivation or capture."
+    },
+    {
+      "id": "followup-ondevice-parse-share",
+      "flagged": true,
+      "owner": "Excel",
+      "summary": "On-device parse share is unknowable server-side (client heuristic never calls the API). Requires an app-side reporting change in OweMe-Mobile if ever wanted; ai-usage DTOs carry honest nulls meanwhile."
+    },
+    {
+      "id": "followup-instrumentation-task",
+      "flagged": true,
+      "owner": "pipeline (fenced instrumentation task)",
+      "summary": "The 11 instrumentation entries above each add one write line to PROTECTED code paths and MUST run as a separate owner-gated fenced task with the full isolated contract suite + registry re-freeze, exactly like the 2026-07-21 maintenance pass. All admin read endpoints are contractually required to render truthfully from the empty tables until then."
+    }
+  ],
+  "writesExistingExceptions": {
+    "note": "The Phase 4 gate sanctions writesExisting only for the additive Business columns (isTest, enterpriseBands, suspendedAt, bvumCeilingOverride-derived) plus Business.plan. Five conventions-mandated actions cannot be expressed inside that list and are DECLARED here rather than hidden behind an empty writesExisting; each is additive-to-behavior via existing service semantics, superadmin- or support-gated per the matrix, and audit-logged.",
+    "exceptions": [
+      { "endpoint": "POST /admin/businesses/:id/grant-credits", "writes": "CreditLedger.balance increment", "authority": "conventions.md test-account tooling power 3 + triage business-detail-need-8 evidence (registry-mandated creditCredits semantics)" },
+      { "endpoint": "POST /admin/businesses/:id/force-plan", "writes": "Subscription lockstep with Business.plan", "authority": "registry sideEffects warning that out-of-band plan edits diverge Business.plan from Subscription; conventions power 3 sales provisioning path" },
+      { "endpoint": "POST /admin/businesses/:id/reset-test", "writes": "hard wipe of Debt/Payment/Reminder + CreditLedger reset for isTest businesses only", "authority": "conventions.md power 4 (explicit owner approval, refuses on non-test)" },
+      { "endpoint": "POST /admin/reminders/:id/retry", "writes": "Reminder.status/sentAt + CreditLedger 5-credit re-debit via existing retry semantics", "authority": "conventions.md role matrix: support may resolve support issues (retry a reminder)" },
+      { "endpoint": "POST /admin/webhooks/events/:id/replay", "writes": "existing WebhooksService processing effects (Payment/Notification/Subscription), idempotent on reference", "authority": "conventions.md role matrix: support may replay a webhook; triage pay-links-need-4" }
+    ]
+  }
+}

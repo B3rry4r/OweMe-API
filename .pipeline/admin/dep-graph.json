@@ -1,0 +1,33 @@
+{
+  "generatedAt": "2026-07-21",
+  "generatedBy": "admin-registry design agent (Phase 4, admin-surface-extension)",
+  "waveRule": "wave 1 = admin auth + audit log + schema-only foundation; wave 2 = read/monitor resources (need the wave 1 guards and, where noted, the wave 1 tables); wave 3 = write/action resources (need the wave 1 guards AND the audit-log write hook). Regression baseline (Phase 4.5 suite from protected-registry.json) must be green before wave 1 and after every wave.",
+  "resources": [
+    { "name": "AdminAuth", "wave": 1, "dependsOn": [], "notes": "AdminUser + admin_refresh_tokens tables, AdminJwtGuard/AdminRolesGuard, login/refresh/me/change-password, superadmin seed command, cross-rejection contract tests both directions." },
+    { "name": "AdminAuditLog", "wave": 1, "dependsOn": ["AdminAuth"], "notes": "admin_audit_log table + append-only audit hook (used by every wave 3 resource) + the two read endpoints behind the AdminAuth guards." },
+    { "name": "AdminSchemaFoundation", "wave": 1, "dependsOn": [], "notes": "Schema-only: usage_events, otp_request_log, otp_test_codes, webhook_event_log tables + additive Business.isTest/enterpriseBands/suspendedAt (+ optional RefreshToken.revokedReason). Additive Prisma migration; gate = migration runs clean on a copy of the current schema and the live app still compiles/boots. No endpoints." },
+
+    { "name": "AdminOverview", "wave": 2, "dependsOn": ["AdminAuth"], "notes": "Aggregates + union-view activity feed over existing tables only." },
+    { "name": "AdminBusinessesView", "wave": 2, "dependsOn": ["AdminAuth", "AdminSchemaFoundation"], "notes": "Reads the new isTest/suspendedAt/enterpriseBands columns and usage_events (credit-usage breakdown, empty-safe)." },
+    { "name": "AdminPlansView", "wave": 2, "dependsOn": ["AdminAuth"], "notes": "Admin-scoped plan catalog read." },
+    { "name": "AdminDebtsView", "wave": 2, "dependsOn": ["AdminAuth"], "notes": "Cross-tenant debts, stats, payments feed over existing tables." },
+    { "name": "AdminRemindersView", "wave": 2, "dependsOn": ["AdminAuth", "AdminSchemaFoundation"], "notes": "Reminder reads + usage_events cost fields (empty-safe); sms-cost-series reads usage_events only." },
+    { "name": "AdminBillingView", "wave": 2, "dependsOn": ["AdminAuth", "AdminSchemaFoundation"], "notes": "Superadmin-only reads; iap-lifecycle reads webhook_event_log (empty-safe) + Subscription sweep." },
+    { "name": "AdminCreditsView", "wave": 2, "dependsOn": ["AdminAuth", "AdminSchemaFoundation"], "notes": "Ledger-derived totals wire day one; burnByType from usage_events (empty-safe); config endpoint exposes live constants." },
+    { "name": "AdminPayLinksView", "wave": 2, "dependsOn": ["AdminAuth", "AdminSchemaFoundation"], "notes": "Payment-derived fee splits (formula-authoritative); webhook events read over webhook_event_log (empty-safe)." },
+    { "name": "AdminPayoutsView", "wave": 2, "dependsOn": ["AdminAuth"], "notes": "Server-side NUBAN masking; settlement fields honest-null per partial-honest-empty ruling." },
+    { "name": "AdminAuthMonitorView", "wave": 2, "dependsOn": ["AdminAuth", "AdminSchemaFoundation"], "notes": "otp_request_log reads (empty-safe), test-numbers list (isTest column), gap-1 sessions panel over RefreshToken (read-only)." },
+    { "name": "AdminAiUsageView", "wave": 2, "dependsOn": ["AdminAuth", "AdminSchemaFoundation"], "notes": "usage_events voiceParse/insight reads, metadata-only recent parses (empty-safe)." },
+    { "name": "AdminSyncHealthView", "wave": 2, "dependsOn": ["AdminAuth"], "notes": "gap-4 tombstone coverage + documented payment hard-delete limitation; read-only over existing tables." },
+
+    { "name": "AdminUserManagement", "wave": 3, "dependsOn": ["AdminAuth", "AdminAuditLog"], "notes": "List/create-with-temp-password/disable/enable/delete; self-disable refused server-side; every write audit-logged." },
+    { "name": "AdminBusinessActions", "wave": 3, "dependsOn": ["AdminAuth", "AdminAuditLog", "AdminSchemaFoundation", "AdminBusinessesView"], "notes": "test-flag, grant-credits, force-plan (Subscription lockstep), enterprise-bands (+derived bvumCeilingOverride), reset-test (isTest-fenced), suspend/unsuspend (gap-5). Returns AdminBusinessesView DTOs, hence the view dependency." },
+    { "name": "AdminReminderActions", "wave": 3, "dependsOn": ["AdminAuth", "AdminAuditLog", "AdminRemindersView"], "notes": "Cross-tenant retry via existing RemindersService semantics; support-allowed; audit-logged; returns AdminReminderView." },
+    { "name": "AdminWebhookActions", "wave": 3, "dependsOn": ["AdminAuth", "AdminAuditLog", "AdminSchemaFoundation", "AdminPayLinksView"], "notes": "Replay of error-outcome webhook_event_log rows through existing WebhooksService processing; support-allowed; audit-logged. Functionally inert until webhook instrumentation populates error rows, but buildable and contract-testable with seeded log rows." },
+    { "name": "AdminOtpReveal", "wave": 3, "dependsOn": ["AdminAuth", "AdminAuditLog", "AdminSchemaFoundation", "AdminAuthMonitorView"], "notes": "Superadmin reveal from otp_test_codes with structural server-side isTest join; every reveal audit-logged. Empty side table until instrumentation lands; contract tests seed rows directly." }
+  ],
+  "outsideWaves": {
+    "instrumentationTask": "The 11 instrumentation entries in admin-registry.json write to PROTECTED files (reminders.service, reminder-dispatch.service, voice.service, auth.service, webhooks.service) and are NOT part of any admin wave: they run as a separate owner-gated fenced maintenance task (like the 2026-07-21 pass) with the full isolated contract suite and a protected-registry re-freeze. All wave 2 readers are contractually empty-safe until it lands.",
+    "suspensionEnforcement": "followup-suspension-enforcement (debts.service change) is owner-ruled work outside this pipeline."
+  }
+}

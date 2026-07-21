@@ -39,6 +39,11 @@ model Business {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   version            Int      @default(0)
+  // --- admin-surface additive columns (admin registry newColumns, 2026-07-21) ---
+  // Kept last in the model so the migration is plain ADD COLUMN (no table rewrite).
+  isTest             Boolean  @default(false) // test-account flag (conventions power 1); structural server-side filter for test-only admin powers
+  enterpriseBands    Int      @default(0) // rev 2 enterprise banding count; price math stays display-side
+  suspendedAt        DateTime? // gap-5 suspension lifecycle state; app-side enforcement is a flagged followUp
 
   staff                   Staff[]
   customers               Customer[]
@@ -86,13 +91,15 @@ model OtpCode {
 }
 
 model RefreshToken {
-  id          String    @id
-  userId      String // references Staff.id
-  tokenHash   String
-  rotatedFrom String?
-  revokedAt   DateTime?
-  expiresAt   DateTime
-  createdAt   DateTime  @default(now())
+  id            String    @id
+  userId        String // references Staff.id
+  tokenHash     String
+  rotatedFrom   String?
+  revokedAt     DateTime?
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+  // additive nullable (admin registry newColumns); kept last so the migration is plain ADD COLUMN
+  revokedReason String? // 'reuse'|'rotation'|'logout' once instrumented; null meanwhile
 
   user Staff @relation(fields: [userId], references: [id])
 
@@ -272,5 +279,116 @@ model CreditLedger {
   periodStart  DateTime @default(now())
 
   business Business @relation(fields: [businessId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Admin surface (additive; admin registry newTables, frozen 2026-07-21)
+// Separate admin identity/session/audit machinery — never touches Staff/OtpCode/
+// RefreshToken. Event tables are append-only and populated by a LATER fenced
+// instrumentation task; all admin reads must render truthfully from empty.
+// ---------------------------------------------------------------------------
+model AdminUser {
+  id                 String    @id // UUIDv7, server-minted
+  email              String    @unique
+  name               String
+  passwordHash       String // hashed per src/auth/auth.crypto.ts idiom
+  role               String // enum: superadmin|support (app-validated)
+  status             String // enum: active|disabled (app-validated)
+  mustChangePassword Boolean   @default(true)
+  lastLoginAt        DateTime?
+  lastActiveAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  refreshTokens AdminRefreshToken[]
+
+  @@map("admin_users")
+}
+
+model AdminRefreshToken {
+  id          String    @id
+  adminUserId String
+  tokenHash   String    @unique
+  rotatedFrom String?
+  revokedAt   DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@index([adminUserId])
+  @@map("admin_refresh_tokens")
+}
+
+model AdminAuditLog {
+  id                String   @id
+  adminUserId       String // actor snapshot fields below keep rows self-contained; append-only, no FK by design
+  adminNameSnapshot String
+  adminRoleSnapshot String
+  actionType        String // kebab verb, e.g. grant-credits, suspend, reveal-otp
+  action            String // human-readable sentence
+  targetType        String?
+  targetId          String?
+  targetBusinessId  String?
+  before            Json?
+  after             Json?
+  note              String?
+  createdAt         DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([adminUserId, createdAt])
+  @@index([actionType, createdAt])
+  @@index([targetBusinessId, createdAt])
+  @@map("admin_audit_log")
+}
+
+model UsageEvent {
+  id               String   @id
+  businessId       String
+  type             String // enum: send|voiceParse|insight (app-validated)
+  credits          Int
+  costKoboEstimate Int?
+  meta             Json? // metadata only; transcripts NEVER stored (metadata-only ruling)
+  createdAt        DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([type, createdAt])
+  @@map("usage_events")
+}
+
+model OtpRequestLog {
+  id          String   @id
+  phoneMasked String // phones stored MASKED only; full numbers never enter this log
+  businessId  String?
+  outcome     String // enum: requested|delivered-unknown|verified|failed|rate-limited
+  attempts    Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([outcome, createdAt])
+  @@map("otp_request_log")
+}
+
+model OtpTestCode {
+  phone     String   @id
+  codePlain String // TEST-flagged businesses ONLY (conventions power 2); written solely at issuance when phone maps to Business.isTest=true
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("otp_test_codes")
+}
+
+model WebhookEventLog {
+  id        String   @id
+  source    String // enum: paystack|iap
+  eventType String
+  reference String?
+  outcome   String // enum: ok|ignored|error
+  detail    Json? // verified payload retained for error rows to enable replay
+  createdAt DateTime @default(now())
+
+  @@index([source, createdAt])
+  @@index([outcome, createdAt])
+  @@map("webhook_event_log")
 }
 
