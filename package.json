@@ -15,6 +15,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:generate": "prisma generate",
     "prisma:seed": "prisma db seed",
+    "seed:admin-demo": "ts-node prisma/seed-admin-demo.ts",
     "test:ci": "bash test/run-isolated.sh"
   },
   "prisma": {
