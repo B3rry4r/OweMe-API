@@ -1,24 +1,161 @@
 {
   "vars": [
-    {"name": "DATABASE_URL", "introducedBy": "schema", "purpose": "Postgres connection (Prisma)", "secret": true},
-    {"name": "JWT_ACCESS_SECRET", "introducedBy": "auth", "purpose": "Sign/verify JWT access tokens", "secret": true},
-    {"name": "JWT_REFRESH_SECRET", "introducedBy": "auth", "purpose": "Sign/verify JWT refresh tokens", "secret": true},
-    {"name": "BULKSMS_API_TOKEN", "introducedBy": "auth+reminders", "purpose": "BulkSMSNigeria Bearer token (OtpSender + MessageSender)", "secret": true},
-    {"name": "PAYSTACK_SECRET_KEY", "introducedBy": "payout-account+debts", "purpose": "Paystack API (banks, resolve, subaccount, transaction init)", "secret": true},
-    {"name": "PAYSTACK_WEBHOOK_SECRET", "introducedBy": "webhooks", "purpose": "Verify Paystack webhook signatures", "secret": true},
-    {"name": "APPLE_IAP_SHARED_SECRET", "introducedBy": "billing", "purpose": "Apple receipt verification", "secret": true},
-    {"name": "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON", "introducedBy": "billing", "purpose": "Google Play receipt verification", "secret": true},
-    {"name": "LLM_PROVIDER_API_KEY", "introducedBy": "voice+insights", "purpose": "Legacy alias for GEMINI_API_KEY (fallback if GEMINI_API_KEY unset)", "secret": true},
-    {"name": "GEMINI_API_KEY", "introducedBy": "voice", "purpose": "Google Gemini API key (voice parse via generateContent). Absent -> StubLlmProvider", "secret": true},
-    {"name": "GEMINI_MODEL", "introducedBy": "voice", "purpose": "Gemini model id; default gemini-3.5-flash (current stable Flash)", "secret": false},
-    {"name": "BULKSMS_SENDER_ID", "introducedBy": "auth+reminders", "purpose": "BulkSMS Nigeria sender name (<=11 chars, 'from'); default OweMe", "secret": false},
-    {"name": "PAYMENT_PROVIDER", "introducedBy": "billing+payout", "purpose": "Payment backend selector: 'paystack' (default) | 'flutterwave'", "secret": false},
-    {"name": "FLUTTERWAVE_SECRET_KEY", "introducedBy": "payout+debts", "purpose": "Flutterwave v3 secret key (banks/resolve/subaccounts/payments). Used when PAYMENT_PROVIDER=flutterwave", "secret": true},
-    {"name": "FLUTTERWAVE_WEBHOOK_SECRET_HASH", "introducedBy": "webhooks", "purpose": "Flutterwave dashboard secret hash, compared to the verif-hash webhook header", "secret": true},
-    {"name": "GOOGLE_PLAY_PACKAGE_NAME", "introducedBy": "billing", "purpose": "Android application id for Play Developer API purchase lookups (e.g. com.oweme.app)", "secret": false},
-    {"name": "JWT_ACCESS_TTL", "introducedBy": "schema", "purpose": "Access-token lifetime (e.g. 15m); consumed by auth signing", "secret": false},
-    {"name": "JWT_REFRESH_TTL", "introducedBy": "schema", "purpose": "Refresh-token lifetime (e.g. 30d); consumed by auth signing", "secret": false},
-    {"name": "PORT", "introducedBy": "schema", "purpose": "HTTP listen port (main.ts; default 3000)", "secret": false}
+    {
+      "name": "DATABASE_URL",
+      "introducedBy": "schema",
+      "purpose": "Postgres connection (Prisma)",
+      "secret": true
+    },
+    {
+      "name": "JWT_ACCESS_SECRET",
+      "introducedBy": "auth",
+      "purpose": "Sign/verify JWT access tokens",
+      "secret": true
+    },
+    {
+      "name": "JWT_REFRESH_SECRET",
+      "introducedBy": "auth",
+      "purpose": "Sign/verify JWT refresh tokens",
+      "secret": true
+    },
+    {
+      "name": "BULKSMS_API_TOKEN",
+      "introducedBy": "auth+reminders",
+      "purpose": "BulkSMSNigeria Bearer token (OtpSender + MessageSender)",
+      "secret": true
+    },
+    {
+      "name": "PAYSTACK_SECRET_KEY",
+      "introducedBy": "payout-account+debts",
+      "purpose": "Paystack API (banks, resolve, subaccount, transaction init)",
+      "secret": true
+    },
+    {
+      "name": "PAYSTACK_WEBHOOK_SECRET",
+      "introducedBy": "webhooks",
+      "purpose": "Verify Paystack webhook signatures",
+      "secret": true
+    },
+    {
+      "name": "APPLE_IAP_SHARED_SECRET",
+      "introducedBy": "billing",
+      "purpose": "Apple receipt verification",
+      "secret": true
+    },
+    {
+      "name": "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON",
+      "introducedBy": "billing",
+      "purpose": "Google Play receipt verification",
+      "secret": true
+    },
+    {
+      "name": "LLM_PROVIDER_API_KEY",
+      "introducedBy": "voice+insights",
+      "purpose": "Legacy alias for GEMINI_API_KEY (fallback if GEMINI_API_KEY unset)",
+      "secret": true
+    },
+    {
+      "name": "GEMINI_API_KEY",
+      "introducedBy": "voice",
+      "purpose": "Google Gemini API key (voice parse via generateContent). Absent -> StubLlmProvider",
+      "secret": true
+    },
+    {
+      "name": "GEMINI_MODEL",
+      "introducedBy": "voice",
+      "purpose": "Gemini model id; default gemini-3.5-flash (current stable Flash)",
+      "secret": false
+    },
+    {
+      "name": "BULKSMS_SENDER_ID",
+      "introducedBy": "auth+reminders",
+      "purpose": "BulkSMS Nigeria sender name (<=11 chars, 'from'); default OweMe",
+      "secret": false
+    },
+    {
+      "name": "PAYMENT_PROVIDER",
+      "introducedBy": "billing+payout",
+      "purpose": "Payment backend selector: 'paystack' (default) | 'flutterwave'",
+      "secret": false
+    },
+    {
+      "name": "FLUTTERWAVE_SECRET_KEY",
+      "introducedBy": "payout+debts",
+      "purpose": "Flutterwave v3 secret key (banks/resolve/subaccounts/payments). Used when PAYMENT_PROVIDER=flutterwave",
+      "secret": true
+    },
+    {
+      "name": "FLUTTERWAVE_WEBHOOK_SECRET_HASH",
+      "introducedBy": "webhooks",
+      "purpose": "Flutterwave dashboard secret hash, compared to the verif-hash webhook header",
+      "secret": true
+    },
+    {
+      "name": "GOOGLE_PLAY_PACKAGE_NAME",
+      "introducedBy": "billing",
+      "purpose": "Android application id for Play Developer API purchase lookups (e.g. com.oweme.app)",
+      "secret": false
+    },
+    {
+      "name": "JWT_ACCESS_TTL",
+      "introducedBy": "schema",
+      "purpose": "Access-token lifetime (e.g. 15m); consumed by auth signing",
+      "secret": false
+    },
+    {
+      "name": "JWT_REFRESH_TTL",
+      "introducedBy": "schema",
+      "purpose": "Refresh-token lifetime (e.g. 30d); consumed by auth signing",
+      "secret": false
+    },
+    {
+      "name": "PORT",
+      "introducedBy": "schema",
+      "purpose": "HTTP listen port (main.ts; default 3000)",
+      "secret": false
+    },
+    {
+      "name": "ADMIN_JWT_SECRET",
+      "introducedBy": "admin-auth",
+      "purpose": "Sign/verify ADMIN access tokens. Distinct from the app's JWT secrets by design; boot throws in production if unset",
+      "secret": true
+    },
+    {
+      "name": "ADMIN_JWT_REFRESH_SECRET",
+      "introducedBy": "admin-auth",
+      "purpose": "Sign/verify ADMIN refresh tokens; boot throws in production if unset",
+      "secret": true
+    },
+    {
+      "name": "ADMIN_DASHBOARD_ORIGINS",
+      "introducedBy": "main.ts CORS",
+      "purpose": "Comma-separated CORS allow-list for the admin dashboard origin(s). Never a wildcard. Default http://localhost:3100",
+      "secret": false
+    },
+    {
+      "name": "ADMIN_SEED_EMAIL",
+      "introducedBy": "admin-auth seed",
+      "purpose": "Email for the first superadmin created by the seed command; refuses if any AdminUser exists",
+      "secret": false
+    },
+    {
+      "name": "ADMIN_SEED_PASSWORD",
+      "introducedBy": "admin-auth seed",
+      "purpose": "Password for the first superadmin",
+      "secret": true
+    },
+    {
+      "name": "ADMIN_SEED_NAME",
+      "introducedBy": "admin-auth seed",
+      "purpose": "Display name for the first superadmin",
+      "secret": false
+    },
+    {
+      "name": "SMS_ROUTE_COST_KOBO",
+      "introducedBy": "usage instrumentation",
+      "purpose": "Per-SMS cost estimate recorded on usage events for the cost panels; documented constant, not billing truth",
+      "secret": false
+    }
   ],
   "note": "Accumulated at reconciliation from declarations + conventions; build agents append any others they introduce."
 }
