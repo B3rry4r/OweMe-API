@@ -32,8 +32,8 @@ describe('Auth (contract)', () => {
   let prisma: PrismaService;
   const sender = new SpyOtpSender();
 
-  const NEW_PHONE = '2348030000001';
-  const KNOWN_PHONE = '2348030000002';
+  const NEW_PHONE = '+2348030000001';
+  const KNOWN_PHONE = '+2348030000002';
 
   const expectStaffShape = (u: Record<string, unknown>): void => {
     expect(typeof u.id).toBe('string');
@@ -282,8 +282,8 @@ describe('Auth (contract)', () => {
 
   // Admin-surface instrumentation: otp_request_log, otp_test_codes, RefreshToken.revokedReason.
   describe('admin instrumentation (best-effort, never alters the auth contract)', () => {
-    const TEST_PHONE = '2348030000003';
-    const REAL_PHONE = '2348030000004';
+    const TEST_PHONE = '+2348030000003';
+    const REAL_PHONE = '+2348030000004';
     const TEST_BIZ = '01912aaa-0000-7000-8000-authinstr001';
     const REAL_BIZ = '01912aaa-0000-7000-8000-authinstr002';
 
@@ -337,8 +337,12 @@ describe('Auth (contract)', () => {
       expect(log).not.toBeNull();
       expect(log!.outcome).toBe('requested');
       expect(log!.attempts).toBe(0);
-      // Masked: last 4 digits only, and the full number is NEVER stored.
-      expect(log!.phoneMasked).toBe(`${'*'.repeat(TEST_PHONE.length - 4)}${TEST_PHONE.slice(-4)}`);
+      // Masked: last 4 digits only, and the full number is NEVER stored. The mask is
+      // computed over DIGITS (the '+' of the canonical E.164 form is stripped first).
+      const testDigits = TEST_PHONE.replace(/\D/g, '');
+      expect(log!.phoneMasked).toBe(
+        `${'*'.repeat(testDigits.length - 4)}${testDigits.slice(-4)}`,
+      );
       expect(log!.phoneMasked).not.toBe(TEST_PHONE);
       expect(JSON.stringify(log)).not.toContain(testCode);
 

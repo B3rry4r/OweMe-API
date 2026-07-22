@@ -6,6 +6,8 @@ import {
   OtpSender,
   RateLimitedException,
   UnauthenticatedException,
+  normalizePhone,
+  phoneVariants,
   uuidv7,
 } from '../common';
 import { AuthTokenService, TokenSubject } from './auth-token.service';
@@ -43,7 +45,11 @@ export class AuthService {
   ) {}
 
   /** POST /auth/request-otp — always 202. Generates a hashed 6-digit code + sends it (unless throttled). */
-  async requestOtp(phone: string, ip: string): Promise<void> {
+  async requestOtp(rawPhone: string, ip: string): Promise<void> {
+    // The phone IS the identity: canonicalise BEFORE it keys anything, so a client
+    // sending 08031472093 and one sending +2348031472093 hit the same account and
+    // the same OTP row. (Clients have historically sent local format.)
+    const phone = normalizePhone(rawPhone);
     if (this.isThrottled(phone, ip)) {
       await this.logOtpEvent(phone, 'rate-limited', 0);
       return; // silent: still 202, no enumeration
@@ -61,13 +67,19 @@ export class AuthService {
       },
     });
     await this.logOtpEvent(phone, 'requested', 0, { code, expiresAt });
-    await this.otpSender.sendOtp(phone, code);
+    // Delivery gets the number AS ENTERED; the provider adapter derives its own MSISDN
+    // wire format (normalizeNigerianMsisdn) and accepts any of these forms. Only the
+    // stored identity above is canonicalised.
+    await this.otpSender.sendOtp(rawPhone, code);
   }
 
   /** POST /auth/verify-otp — validate latest code, then issue a session. */
-  async verifyOtp(phone: string, code: string): Promise<AuthSession> {
+  async verifyOtp(rawPhone: string, code: string): Promise<AuthSession> {
+    // Same canonical identity as requestOtp — otherwise a code issued for
+    // +234... could never be verified by a client posting the local form.
+    const phone = normalizePhone(rawPhone);
     const record = await this.prisma.otpCode.findFirst({
-      where: { phone },
+      where: { phone: { in: phoneVariants(phone) } },
       orderBy: { createdAt: 'desc' },
     });
     if (!record) {
@@ -96,9 +108,11 @@ export class AuthService {
     }
 
     // Success: consume every outstanding code for this phone.
-    await this.prisma.otpCode.deleteMany({ where: { phone } });
+    await this.prisma.otpCode.deleteMany({ where: { phone: { in: phoneVariants(phone) } } });
     // Consume the test-account mirror alongside it (best-effort; no-op for real users).
-    await this.prisma.otpTestCode.deleteMany({ where: { phone } }).catch(() => undefined);
+    await this.prisma.otpTestCode
+      .deleteMany({ where: { phone: { in: phoneVariants(phone) } } })
+      .catch(() => undefined);
     await this.logOtpEvent(phone, 'verified', record.attempts);
 
     const { staff, business } = await this.resolveAccount(phone);
@@ -176,8 +190,8 @@ export class AuthService {
   ): Promise<void> {
     try {
       const business = await this.prisma.business.findFirst({
-        where: { phone },
-        select: { id: true, isTest: true },
+        where: { phone: { in: phoneVariants(phone) } },
+        select: { id: true, isTest: true, phone: true },
       });
       await this.prisma.otpRequestLog.create({
         data: {
@@ -189,9 +203,10 @@ export class AuthService {
         },
       });
       if (issued && business?.isTest) {
+        const mirrorPhone = business.phone ?? phone;
         await this.prisma.otpTestCode.upsert({
-          where: { phone },
-          create: { phone, codePlain: issued.code, expiresAt: issued.expiresAt },
+          where: { phone: mirrorPhone },
+          create: { phone: mirrorPhone, codePlain: issued.code, expiresAt: issued.expiresAt },
           update: { codePlain: issued.code, expiresAt: issued.expiresAt },
         });
       }
@@ -207,7 +222,7 @@ export class AuthService {
     phone: string,
   ): Promise<{ staff: TokenSubject & Record<string, unknown>; business: Business | null }> {
     const existing = await this.prisma.staff.findFirst({
-      where: { phone },
+      where: { phone: { in: phoneVariants(phone) } },
       orderBy: { createdAt: 'asc' },
     });
     if (existing) {

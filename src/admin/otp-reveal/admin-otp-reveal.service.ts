@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { NotFoundAppException } from '../../common';
+import { NotFoundAppException, RateLimitedException } from '../../common';
 import { AdminPrincipal } from '../common';
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { AdminOtpRevealView } from './admin-otp-reveal.views';
@@ -22,6 +22,12 @@ import { AdminOtpRevealView } from './admin-otp-reveal.views';
  * - Business missing, business not test-flagged and no active code all produce the SAME
  *   404 with the SAME message, so the endpoint cannot be used to probe which businesses
  *   are test accounts. The audit row records the truthful reason.
+ * - ONE exception, and only past the isTest gate: if the reason there is no code is that
+ *   the last request was RATE-LIMITED, we say so (429) instead of the bare 404. request-otp
+ *   answers 202 even when throttled (anti-enumeration), so the app shows "code sent" while
+ *   no code was ever issued — without this, the operator sees "no active code" and blames
+ *   the reveal. Safe to differentiate here because the caller has already proven the target
+ *   is a test business, so it leaks nothing a non-test probe could use.
  *
  * Nothing outside admin_audit_log is written: no code is consumed, no row is deleted
  * (the app's OtpCode consumption semantics are untouched), so a reveal is pure and
@@ -31,7 +37,19 @@ import { AdminOtpRevealView } from './admin-otp-reveal.views';
 /** One message for every refusal path; the caller learns nothing from the difference. */
 const REVEAL_NOT_FOUND_MESSAGE = 'No active test OTP code for this business';
 
-type RevealRefusal = 'business-not-found' | 'business-not-test-flagged' | 'no-active-code';
+/** Said only to a caller who has already proven the target is a test business. */
+const REVEAL_RATE_LIMITED_MESSAGE =
+  'The last OTP request for this test number was rate-limited, so no new code was issued. ' +
+  'Wait about a minute, then request the code again from the app.';
+
+/** How far back a 'rate-limited' event still explains the missing code (throttle window is 60s). */
+const RATE_LIMIT_LOOKBACK_MS = 2 * 60 * 1000;
+
+type RevealRefusal =
+  | 'business-not-found'
+  | 'business-not-test-flagged'
+  | 'no-active-code'
+  | 'rate-limited';
 
 @Injectable()
 export class AdminOtpRevealService {
@@ -71,6 +89,22 @@ export class AdminOtpRevealService {
     // Empty side table (the state until the auth.service instrumentation lands) is a normal
     // no-code outcome, not an error condition: same 404 as an expired code.
     if (!testCode) {
+      // Distinguish "throttled, so nothing was ever issued" from "genuinely nothing here".
+      // request-otp returns 202 even when it silently drops the request, so this is the
+      // only place an operator can learn why the app's "code sent" produced no code.
+      const throttled = await this.prisma.otpRequestLog.findFirst({
+        where: {
+          businessId,
+          outcome: 'rate-limited',
+          createdAt: { gt: new Date(now.getTime() - RATE_LIMIT_LOOKBACK_MS) },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      });
+      if (throttled) {
+        await this.recordRefusal(actor, businessId, 'rate-limited', businessId);
+        throw new RateLimitedException(REVEAL_RATE_LIMITED_MESSAGE);
+      }
       await this.recordRefusal(actor, businessId, 'no-active-code', businessId);
       throw new NotFoundAppException(REVEAL_NOT_FOUND_MESSAGE);
     }

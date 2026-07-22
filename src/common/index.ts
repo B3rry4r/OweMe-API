@@ -23,6 +23,7 @@ export * from './concurrency/version';
 
 // Utils
 export * from './utils/money';
+export * from './utils/phone';
 export * from './utils/uuid';
 
 // Provider interfaces + DI tokens + stubs
